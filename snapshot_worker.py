@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
 Cloud Options Snapshot & Volatility Dashboard Builder (Single-Page Watchlist Edition)
+Includes data-integrity guards:
+1. Failed or incomplete ticker pulls preserve prior valid snapshot & history entries.
+2. Broken/unreliable quotes (no-bid, crossed markets, below-intrinsic arbitrage, or tiny volume/OI)
+   are excluded from spread averages, implied volatility calculations, and bias scoring.
+3. Rolling history caps keep trend charts clean, bounded, and responsive.
 """
 
 import json
@@ -26,6 +31,9 @@ SPREAD_SAMPLE_INTERVAL_SECONDS = 60
 RETRY_DELAY_SECONDS = 5
 
 MIN_OI_FOR_RATIO = 25
+MIN_VOLUME_FOR_FLOW = 10
+MAX_SPREAD_SAMPLES_PER_CONTRACT = 80
+MAX_MARKET_HISTORY_SAMPLES = 80
 STALE_QUOTE_DAYS = 3
 ARBITRAGE_TOLERANCE = 0.01
 SNAPSHOT_NO_BID_WARN_PCT = 40.0
@@ -99,17 +107,31 @@ def get_current_price(tk):
         if hist is not None and not hist.empty and "Close" in hist.columns:
             close_series = hist["Close"].dropna()
             if not close_series.empty:
-                return float(close_series.iloc[-1])
+                val = float(close_series.iloc[-1])
+                if math.isfinite(val) and val > 0:
+                    return val
     except Exception:
         pass
     return math.nan
+
+
+def _clean_num(val, decimals=2):
+    if val is None or (isinstance(val, float) and (math.isnan(val) or not math.isfinite(val))):
+        return None
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return round(f, decimals)
 
 
 def compute_map_bias_flag(df):
     result = {
         "bias": "Neutral",
         "score": 0.0,
-        "summary": "Insufficient liquidity or IV data to establish directional bias.",
+        "summary": "Insufficient clean liquidity or IV data to establish directional bias.",
         "call_vol_share": None,
         "call_oi_share": None,
         "vol_tilt": 0.0,
@@ -124,13 +146,30 @@ def compute_map_bias_flag(df):
     score = 0.0
     notes = []
 
-    liq_df = df.copy()
-    spread_col = "avgSpreadPct" if "avgSpreadPct" in liq_df.columns else "spreadPct"
-    spread_vals = pd.to_numeric(liq_df.get(spread_col), errors="coerce").fillna(100.0).clip(lower=0.0, upper=200.0)
-    liq_weight = 1.0 / (1.0 + spread_vals / 100.0)
+    # Only include contracts with clean, non-crossed, non-arbitrage quotes for flow/bias signals
+    clean_mask = pd.Series(True, index=df.index)
+    if "noBid" in df.columns:
+        clean_mask &= ~df["noBid"].fillna(False)
+    if "crossedMarket" in df.columns:
+        clean_mask &= ~df["crossedMarket"].fillna(False)
+    if "arbitrageViolation" in df.columns:
+        clean_mask &= ~df["arbitrageViolation"].fillna(False)
 
-    vol_series = pd.to_numeric(liq_df.get("volume"), errors="coerce").fillna(0.0) * liq_weight
-    oi_series = pd.to_numeric(liq_df.get("openInterest"), errors="coerce").fillna(0.0) * liq_weight
+    liq_df = df[clean_mask].copy()
+    if liq_df.empty:
+        return result
+
+    spread_col = "avgSpreadPct" if "avgSpreadPct" in liq_df.columns else "spreadPct"
+    spread_vals = pd.to_numeric(liq_df.get(spread_col), errors="coerce").fillna(50.0).clip(lower=0.0, upper=100.0)
+    liq_weight = 1.0 / (1.0 + spread_vals / 50.0)
+
+    raw_vol = pd.to_numeric(liq_df.get("volume"), errors="coerce").fillna(0.0)
+    active_vol = raw_vol.where(raw_vol >= MIN_VOLUME_FOR_FLOW, 0.0)
+    vol_series = active_vol * liq_weight
+
+    raw_oi = pd.to_numeric(liq_df.get("openInterest"), errors="coerce").fillna(0.0)
+    active_oi = raw_oi.where(raw_oi >= MIN_OI_FOR_RATIO, 0.0)
+    oi_series = active_oi * liq_weight
 
     call_mask = liq_df["type"] == "Call"
     put_mask = liq_df["type"] == "Put"
@@ -164,9 +203,11 @@ def compute_map_bias_flag(df):
             side = "Call" if oi_tilt > 0 else "Put"
             notes.append(f"OI leans {side} ({call_oi_share * 100:.0f}% calls)")
 
-    iv_reliable_mask = df["ivReliable"] if "ivReliable" in df.columns else pd.Series(True, index=df.index)
-    iv_series = pd.to_numeric(df.get("impliedVolatility"), errors="coerce")
-    iv_df = df[iv_reliable_mask.fillna(True) & iv_series.notna() & (iv_series > 0)].copy()
+    iv_reliable_mask = liq_df["ivReliable"] if "ivReliable" in liq_df.columns else pd.Series(True, index=liq_df.index)
+    iv_series = pd.to_numeric(liq_df.get("impliedVolatility"), errors="coerce")
+    # Sanity-bound IV to 1%..400% so corrupted Yahoo IV spikes do not distort skew or slope
+    valid_iv_range = iv_series.notna() & (iv_series > 0.01) & (iv_series < 4.0)
+    iv_df = liq_df[iv_reliable_mask.fillna(True) & valid_iv_range].copy()
     iv_df["impliedVolatility"] = iv_series.loc[iv_df.index]
 
     if not iv_df.empty and "daysToExpiration" in iv_df.columns:
@@ -207,6 +248,7 @@ def compute_map_bias_flag(df):
                         else:
                             notes.append("Inverted IV curve" if slope > 0 else "Contango IV curve")
 
+    score = max(-2.4, min(2.4, score))
     if score >= 0.35:
         bias = "Bullish"
     elif score <= -0.35:
@@ -247,10 +289,12 @@ def get_volatility_insights(tk, full_df, underlying_price):
         hist = tk.history(period="1y")
         if hist is not None and not hist.empty and len(hist) >= 30 and "Close" in hist.columns:
             close_vals = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            close_vals = close_vals[close_vals > 0]
             if len(close_vals) >= 30:
                 log_returns = np.log(close_vals / close_vals.shift(1))
                 rolling_30d_hv = log_returns.rolling(window=30).std() * np.sqrt(252) * 100.0
                 hv_series = rolling_30d_hv.dropna()
+                hv_series = hv_series[np.isfinite(hv_series) & (hv_series > 0) & (hv_series < 300)]
 
                 if not hv_series.empty:
                     current_hv = float(hv_series.iloc[-1])
@@ -260,6 +304,7 @@ def get_volatility_insights(tk, full_df, underlying_price):
                     hv_rank = 0.0
                     if hv_high > hv_low:
                         hv_rank = ((current_hv - hv_low) / (hv_high - hv_low)) * 100.0
+                        hv_rank = max(0.0, min(100.0, hv_rank))
 
                     insights["current_30d_hv"] = round(current_hv, 2)
                     insights["hv_52w_high"] = round(hv_high, 2)
@@ -269,12 +314,21 @@ def get_volatility_insights(tk, full_df, underlying_price):
         pass
 
     try:
-        if full_df is not None and not full_df.empty and underlying_price and not math.isnan(underlying_price):
+        if full_df is not None and not full_df.empty and underlying_price and math.isfinite(underlying_price) and underlying_price > 0:
             iv_series = pd.to_numeric(full_df.get("impliedVolatility"), errors="coerce")
             strike_series = pd.to_numeric(full_df.get("strike"), errors="coerce")
             reliable_mask = full_df["ivReliable"] if "ivReliable" in full_df.columns else pd.Series(True, index=full_df.index)
+            no_bid_mask = full_df["noBid"] if "noBid" in full_df.columns else pd.Series(False, index=full_df.index)
 
-            valid_ivs = full_df[reliable_mask.fillna(True) & iv_series.notna() & (iv_series > 0) & strike_series.notna()].copy()
+            valid_ivs = full_df[
+                reliable_mask.fillna(True)
+                & (~no_bid_mask.fillna(False))
+                & iv_series.notna()
+                & (iv_series > 0.01)
+                & (iv_series < 4.0)
+                & strike_series.notna()
+                & (strike_series > 0)
+            ].copy()
             if not valid_ivs.empty:
                 valid_ivs["impliedVolatility"] = iv_series.loc[valid_ivs.index]
                 valid_ivs["strike"] = strike_series.loc[valid_ivs.index]
@@ -375,8 +429,8 @@ def add_computed_metrics(df, option_type, expiration, underlying_price, fetch_ti
         else:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    df["volume"] = df["volume"].fillna(0)
-    df["openInterest"] = df["openInterest"].fillna(0)
+    df["volume"] = df["volume"].fillna(0).clip(lower=0)
+    df["openInterest"] = df["openInterest"].fillna(0).clip(lower=0)
 
     bid = df["bid"].fillna(0)
     ask = df["ask"].fillna(0)
@@ -387,15 +441,28 @@ def add_computed_metrics(df, option_type, expiration, underlying_price, fetch_ti
 
     has_two_sided_market = (bid > 0) & (ask > 0)
     crossed_market = (bid > 0) & (ask > 0) & (ask < bid)
-    valid_spread = has_two_sided_market & ~crossed_market
-    df["spreadPct"] = spread.where(valid_spread) / mid.where(valid_spread) * 100.0
+    valid_spread = has_two_sided_market & ~crossed_market & (mid > 0)
+
+    if underlying_price and not math.isnan(underlying_price) and underlying_price > 0:
+        if option_type == "Call":
+            intrinsic = (underlying_price - df["strike"]).clip(lower=0)
+        else:
+            intrinsic = (df["strike"] - underlying_price).clip(lower=0)
+        df["arbitrageViolation"] = (bid > 0) & (bid < intrinsic - ARBITRAGE_TOLERANCE)
+    else:
+        df["arbitrageViolation"] = False
+
+    clean_spread_mask = valid_spread & ~df["arbitrageViolation"]
+    raw_spread_pct = spread.where(clean_spread_mask) / mid.where(clean_spread_mask) * 100.0
+    # Bound extreme bid/ask glitches above 250% spread so single-quote anomalies don't skew averages
+    df["spreadPct"] = raw_spread_pct.where(raw_spread_pct.isna() | ((raw_spread_pct >= 0) & (raw_spread_pct <= 250.0)))
 
     volume = df["volume"].fillna(0)
     open_interest = df["openInterest"].fillna(0)
     reliable_oi = open_interest >= MIN_OI_FOR_RATIO
     df["volumeOiRatio"] = volume.where(reliable_oi) / open_interest.where(reliable_oi)
 
-    if underlying_price and not math.isnan(underlying_price):
+    if underlying_price and not math.isnan(underlying_price) and underlying_price > 0:
         df["moneynessPct"] = (df["strike"] - underlying_price) / underlying_price * 100.0
         df["inTheMoney"] = (df["strike"] < underlying_price) if option_type == "Call" else (df["strike"] > underlying_price)
     else:
@@ -405,15 +472,6 @@ def add_computed_metrics(df, option_type, expiration, underlying_price, fetch_ti
     df["noBid"] = bid <= 0
     df["crossedMarket"] = crossed_market
     df["lowOiConfidence"] = ~reliable_oi
-
-    if underlying_price and not math.isnan(underlying_price):
-        if option_type == "Call":
-            intrinsic = (underlying_price - df["strike"]).clip(lower=0)
-        else:
-            intrinsic = (df["strike"] - underlying_price).clip(lower=0)
-        df["arbitrageViolation"] = (bid > 0) & (bid < intrinsic - ARBITRAGE_TOLERANCE)
-    else:
-        df["arbitrageViolation"] = False
 
     if "lastTradeDate" in df.columns:
         last_trade = pd.to_datetime(df["lastTradeDate"], errors="coerce", utc=True)
@@ -426,19 +484,23 @@ def add_computed_metrics(df, option_type, expiration, underlying_price, fetch_ti
         df["quoteAgeDays"] = math.nan
         df["staleQuote"] = None
 
-    df["ivReliable"] = has_two_sided_market & ~df["arbitrageViolation"] & ~df["crossedMarket"]
+    df["ivReliable"] = clean_spread_mask
 
     T_years = days_to_expiration / 365.0
     deltas, gammas, thetas, vegas = [], [], [], []
-    for strike, sigma in zip(df["strike"], df["impliedVolatility"]):
-        g = black_scholes_greeks(option_type, underlying_price, strike, T_years, sigma)
+    for strike, sigma, is_rel in zip(df["strike"], df["impliedVolatility"], df["ivReliable"]):
+        if not is_rel or sigma is None or pd.isna(sigma) or not (0.01 < float(sigma) < 4.0):
+            deltas.append(math.nan)
+            gammas.append(math.nan)
+            thetas.append(math.nan)
+            vegas.append(math.nan)
+            continue
+        g = black_scholes_greeks(option_type, underlying_price, strike, T_years, float(sigma))
         deltas.append(g["delta"])
         gammas.append(g["gamma"])
         thetas.append(g["theta"])
         vegas.append(g["vega"])
     df["delta"], df["gamma"], df["theta"], df["vega"] = deltas, gammas, thetas, vegas
-    unreliable = ~df["ivReliable"]
-    df.loc[unreliable, ["delta", "gamma", "theta", "vega"]] = math.nan
 
     df["contractKey"] = [make_contract_key(r) for _, r in df.iterrows()]
     return df
@@ -526,21 +588,17 @@ def assess_snapshot_quality(full_df):
     return warnings
 
 
-def _clean_num(val, decimals=2):
-    if val is None or (isinstance(val, float) and (math.isnan(val) or not math.isfinite(val))):
-        return None
-    try:
-        f = float(val)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(f):
-        return None
-    return round(f, decimals)
-
-
 def serialize_ticker_snapshot(ticker, underlying_price, full_df, filtered_df, warnings, vol_insights, sample_round, fetched_at):
     contracts = []
     for _, row in filtered_df.iterrows():
+        iv_raw = row.get("impliedVolatility")
+        iv_reliable = bool(row.get("ivReliable", False))
+        iv_clean = None
+        if iv_reliable and iv_raw is not None and not pd.isna(iv_raw) and math.isfinite(float(iv_raw)):
+            iv_val = float(iv_raw)
+            if 0.01 < iv_val < 4.0:
+                iv_clean = _clean_num(iv_val * 100.0, 2)
+
         contracts.append({
             "type": str(row.get("type", "-")),
             "exp": str(row.get("expiration", "-")),
@@ -556,14 +614,7 @@ def serialize_ticker_snapshot(ticker, underlying_price, full_df, filtered_df, wa
             "vol": int(pd.to_numeric(row.get("volume", 0), errors="coerce") or 0),
             "oi": int(pd.to_numeric(row.get("openInterest", 0), errors="coerce") or 0),
             "volOi": _clean_num(row.get("volumeOiRatio"), 2),
-            "iv": _clean_num(
-                float(row.get("impliedVolatility")) * 100.0
-                if row.get("impliedVolatility") is not None
-                and not pd.isna(row.get("impliedVolatility"))
-                and math.isfinite(float(row.get("impliedVolatility")))
-                else None,
-                2,
-            ),
+            "iv": iv_clean,
             "delta": _clean_num(row.get("delta"), 3),
             "theta": _clean_num(row.get("theta"), 3),
             "noBid": bool(row.get("noBid", False)),
@@ -657,15 +708,19 @@ class DashboardState:
     def record_spread_sample(self, ticker, contract_key, spread_pct):
         ticker_hist = self.spread_history.setdefault(ticker, {})
         samples = ticker_hist.setdefault(contract_key, [])
-        if spread_pct is not None and not pd.isna(spread_pct) and math.isfinite(float(spread_pct)):
-            samples.append(float(spread_pct))
+        if spread_pct is not None and not pd.isna(spread_pct):
+            fval = float(spread_pct)
+            if math.isfinite(fval) and 0.0 <= fval <= 250.0:
+                samples.append(round(fval, 4))
+                if len(samples) > MAX_SPREAD_SAMPLES_PER_CONTRACT:
+                    del samples[:-MAX_SPREAD_SAMPLES_PER_CONTRACT]
         return list(samples)
 
     def record_market_snapshot(self, ticker, sample_round, underlying_price, vol_insights, timestamp_str=None):
         ts = timestamp_str or datetime.now().strftime("%H:%M:%S")
         spot_val = (
             round(float(underlying_price), 2)
-            if underlying_price is not None and not math.isnan(underlying_price)
+            if underlying_price is not None and math.isfinite(underlying_price) and underlying_price > 0
             else None
         )
         entry = {
@@ -688,6 +743,8 @@ class DashboardState:
         }
         hist = self.market_history.setdefault(ticker, [])
         hist.append(entry)
+        if len(hist) > MAX_MARKET_HISTORY_SAMPLES:
+            del hist[:-MAX_MARKET_HISTORY_SAMPLES]
         return list(hist)
 
     def increment_sample_round(self, ticker):
@@ -731,6 +788,9 @@ def print_minutely_data(ticker, underlying_price, full_df, filtered_df, vol_insi
 def scan_and_cache_ticker(ticker, config):
     tk = yf.Ticker(ticker)
     underlying_price = get_current_price(tk)
+    if underlying_price is None or not math.isfinite(underlying_price) or underlying_price <= 0:
+        raise RuntimeError(f"Invalid or missing underlying price for {ticker}.")
+
     expirations = tk.options
     if not expirations:
         raise RuntimeError(f"No options expirations returned for {ticker}.")
@@ -773,12 +833,19 @@ def scan_and_cache_ticker(ticker, config):
     if full_df.empty:
         raise RuntimeError(f"Combined option chain is empty for {ticker}.")
 
+    # Reject corrupted chain fetches where every single contract has zero bid or non-positive strike
+    valid_strikes = pd.to_numeric(full_df.get("strike"), errors="coerce")
+    if (valid_strikes > 0).sum() == 0:
+        raise RuntimeError(f"All option strikes invalid for {ticker}.")
+
+    # Compute preliminary metrics & average spreads only after chain sanity check passes
     full_df = attach_average_spread(full_df, GLOBAL_STATE, ticker)
-    sample_round = GLOBAL_STATE.increment_sample_round(ticker) if GLOBAL_STATE else 1
     filtered_df = apply_filters(full_df, config)
     warnings = assess_snapshot_quality(full_df)
     vol_insights = get_volatility_insights(tk, full_df, underlying_price)
 
+    # Commit round, market_history, and snapshots.json atomically only after full calculation succeeds
+    sample_round = GLOBAL_STATE.increment_sample_round(ticker) if GLOBAL_STATE else 1
     if GLOBAL_STATE:
         GLOBAL_STATE.record_market_snapshot(
             ticker,
@@ -816,6 +883,10 @@ def refresh_ticker_with_retry(ticker, config, max_attempts_before_log=3):
                 f"Retrying in {RETRY_DELAY_SECONDS}s..."
             )
             if max_attempts_before_log is not None and attempt >= max_attempts_before_log:
+                print(
+                    f"  [Preserved] Keeping previous valid snapshot & history for {ticker} "
+                    f"after {attempt} failed attempt(s)."
+                )
                 return False
             time.sleep(RETRY_DELAY_SECONDS)
 
@@ -1281,7 +1352,7 @@ def build_index_page(out_dir: Path, watchlist: list):
         <div class="filter-count" id="filter-count">0 matching contracts</div>
     </div>
 
-    <div class="note">Click any table header to sort. Avg Spread% averages valid spread% samples across snapshots (hover cell for sample count). Rows with data-quality issues are highlighted in red.</div>
+    <div class="note">Click any table header to sort. Avg Spread% averages clean spread% samples across snapshots (hover cell for sample count). Red rows highlight no-bid, stale, or below-intrinsic quotes.</div>
     <div class="table-wrap">
         <table class="data-table" id="scan-results-table" data-sort-col="" data-sort-dir="">
             <thead>
@@ -1443,7 +1514,7 @@ def build_index_page(out_dir: Path, watchlist: list):
                 spotTxt = ` Underlying moved $${Number(first.spot).toFixed(2)} &rarr; $${Number(latest.spot).toFixed(2)} (${dpPct >= 0 ? "+" : ""}${dpPct.toFixed(2)}%).`;
             }
 
-            return `Across <strong>${n}</strong> snapshots (${first.timestamp} &ndash; ${latest.timestamp}), composite order-flow bias ${trend}.${flipTxt}${volTxt}${spotTxt}`;
+            return `Across <strong>${n}</strong> recent snapshots (${first.timestamp} &ndash; ${latest.timestamp}), composite order-flow bias ${trend}.${flipTxt}${volTxt}${spotTxt}`;
         }
 
         function computeDeltas(values) {
@@ -1581,11 +1652,14 @@ def build_index_page(out_dir: Path, watchlist: list):
                 return;
             }
 
+            const cleanLiqContracts = contracts.filter(
+                c => !c.noBid && !c.arb && c.avgSpread !== null && c.avgSpread !== undefined && Number.isFinite(Number(c.avgSpread))
+            );
             const liqTraces = ["Call", "Put"].map(optType => {
-                const sub = contracts.filter(c => c.type === optType);
+                const sub = cleanLiqContracts.filter(c => c.type === optType);
                 return {
                     x: sub.map(c => Number(c.vol || 0)),
-                    y: sub.map(c => c.avgSpread !== null && c.avgSpread !== undefined ? Number(c.avgSpread) : 100.0),
+                    y: sub.map(c => Number(c.avgSpread)),
                     name: optType,
                     mode: "markers",
                     marker: {
@@ -1602,14 +1676,14 @@ def build_index_page(out_dir: Path, watchlist: list):
             Plotly.newPlot(liqEl, liqTraces, {
                 template: "plotly_white",
                 height: 420,
-                title: { text: `${ticker} Liquidity Map (Volume vs Avg Spread %)`, font: { size: 15 } },
+                title: { text: `${ticker} Liquidity Map (Volume vs Avg Spread %, Clean Two-Sided Quotes)`, font: { size: 15 } },
                 xaxis: { title: "Volume" },
                 yaxis: { title: "Avg Spread %" },
                 legend: { title: { text: "Option Type" } },
                 margin: { l: 60, r: 30, t: 55, b: 50 }
             }, { responsive: true });
 
-            const validIv = contracts.filter(c => !c.noBid && !c.arb && c.iv !== null && c.iv !== undefined && Number(c.iv) > 0);
+            const validIv = contracts.filter(c => !c.noBid && !c.arb && c.iv !== null && c.iv !== undefined && Number(c.iv) > 1 && Number(c.iv) < 400);
             if (validIv.length === 0) {
                 Plotly.purge(ivEl);
                 ivEl.innerHTML = "<p style='padding:12px;'>No reliable IV data available for smile chart.</p>";
@@ -1660,7 +1734,7 @@ def build_index_page(out_dir: Path, watchlist: list):
 
             if (!snap) {
                 if (noticeEl) {
-                    noticeEl.textContent = `No snapshot found yet for ${ticker}. It may not be in the 50-ticker background watchlist or hasn't finished its first scan.`;
+                    noticeEl.textContent = `No snapshot found yet for ${ticker}. It may not be in the background watchlist or hasn't finished its first clean scan.`;
                     noticeEl.classList.add("visible");
                 }
                 document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
@@ -1682,7 +1756,7 @@ def build_index_page(out_dir: Path, watchlist: list):
             document.title = `${ticker} Options Scan Dashboard`;
             document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
             document.getElementById("dashboard-meta").innerHTML =
-                `Underlying Price: <strong>${spotStr}</strong> | Latest Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> | Spread Samples: <strong>${rounds}</strong> (every ${SPREAD_SAMPLE_INTERVAL_SECONDS = 60}s)`;
+                `Underlying Price: <strong>${spotStr}</strong> | Latest Clean Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> | Valid Snapshots: <strong>${rounds}</strong> (last ${history.length} in trend)`;
 
             const warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
             if (warnings.length > 0 && warnBanner && warnList) {
@@ -1720,7 +1794,7 @@ def build_index_page(out_dir: Path, watchlist: list):
             tbody.innerHTML = contracts.map(r => {
                 const isFlagged = Boolean(r.noBid || r.stale || r.arb);
                 const rowCls = isFlagged ? ' class="flagged-row"' : "";
-                const spreadTitle = `Averaged across ${r.samples || 0} sample(s)`;
+                const spreadTitle = `Averaged across ${r.samples || 0} clean sample(s)`;
                 return `<tr${rowCls}>
                     <td>${escapeHtml(r.type || "-")}</td>
                     <td>${escapeHtml(r.exp || "-")}</td>
