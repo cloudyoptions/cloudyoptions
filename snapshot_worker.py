@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Cloud Options Snapshot & Volatility Dashboard Builder
+Cloud Options Snapshot & Volatility Dashboard Builder (Single-Page Watchlist Edition)
 """
 
-import html as html_lib
 import json
 import math
 import os
@@ -19,13 +18,6 @@ import pandas as pd
 try:
     import yfinance as yf
     from yfinance.exceptions import YFRateLimitError
-except ImportError:
-    sys.exit("Missing dependency. Run: pip install -r requirements.txt")
-
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 except ImportError:
     sys.exit("Missing dependency. Run: pip install -r requirements.txt")
 
@@ -46,7 +38,7 @@ def get_scan_config():
     """Reads up to 50 watchlist tickers and optional MAX_PREMIUM from environment variables."""
     raw_tickers = os.getenv(
         "TICKERS",
-        "SPY, QQQ, XLE, GOOGL, AAPL, MSFT, NVDA, AMZN, META, TSLA"
+        "AAL, AAPL, AMZN, AVGO, BAC, CLF, CLSK, COIN, CSCO, F, GOOGL, IBIT, JD, KO, MARA, NVDA, ONDS, OSCR, PEP, PFE, PG, PLTR, QQQ, RIOT, RIVN, RKLB, S, SBUX, SLV, SOFI, SPCX, SPY, SQQQ, T, TSLA, UBER, WMT, WULF, XLE, XLF, XLU, XLP"
     ).strip()
     if not raw_tickers:
         sys.exit("No ticker(s) entered in TICKERS.")
@@ -534,877 +526,107 @@ def assess_snapshot_quality(full_df):
     return warnings
 
 
-DASHBOARD_CSS = """
-    body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 24px 32px 60px;
-           background: #f7f8fa; color: #1a1a1a; }
-    .watchlist-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-                     background: white; border: 1px solid #ccd2da; border-radius: 8px;
-                     padding: 10px 14px; margin-bottom: 14px; }
-    .watchlist-bar label { font-size: 0.78em; font-weight: 700; color: #374151;
-                          text-transform: uppercase; letter-spacing: 0.03em; }
-    .watchlist-bar input[list="watchlist-tickers"] { padding: 6px 10px; border: 1px solid #ccd2da;
-                          border-radius: 6px; font-size: 0.9em; width: 170px; text-transform: uppercase; }
-    .watchlist-bar select { padding: 6px 10px; border: 1px solid #ccd2da; border-radius: 6px;
-                          font-size: 0.9em; background: white; }
-    .watchlist-go-btn { padding: 6px 14px; border: 1px solid #2563eb; border-radius: 6px;
-                        background: #2563eb; color: white; font-size: 0.88em; font-weight: 600;
-                        cursor: pointer; }
-    .watchlist-go-btn:hover { background: #1d4ed8; }
-    h1 { font-size: 1.6em; margin-bottom: 4px; }
-    .header-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    h2 { font-size: 1.15em; margin-top: 28px; border-bottom: 2px solid #e2e4e8; padding-bottom: 6px; }
-    .meta { color: #555; font-size: 0.92em; line-height: 1.6; }
-    .warning-banner { background: #fff4e5; border: 1px solid #f0b429; border-radius: 8px; padding: 14px 18px; margin: 16px 0; }
-    .warning-banner h2 { border: none; margin: 0 0 8px 0; color: #92400e; }
-    .warning-banner ul { margin: 4px 0 0 0; padding-left: 20px; }
-    .stat-row { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 4px; }
-    .stat-box { background: white; border: 1px solid #e2e4e8; border-radius: 8px; padding: 10px 16px; min-width: 140px; }
-    .stat-box.highlight { border-color: #2563eb; background: #f0f5ff; }
-    .stat-box.bias-bullish { border-color: #16a34a; background: #f0fdf4; }
-    .stat-box.bias-bullish .value, .stat-box.bias-bullish .sub { color: #15803d; }
-    .stat-box.bias-bearish { border-color: #dc2626; background: #fef2f2; }
-    .stat-box.bias-bearish .value, .stat-box.bias-bearish .sub { color: #b91c1c; }
-    .stat-box.bias-neutral { border-color: #64748b; background: #f8fafc; }
-    .stat-box.bias-neutral .value, .stat-box.bias-neutral .sub { color: #475569; }
-    .stat-box .label { font-size: 0.72em; color: #666; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
-    .stat-box .value { font-size: 1.25em; font-weight: 700; color: #111827; margin-top: 2px; }
-    .stat-box .sub { font-size: 0.75em; color: #2563eb; font-weight: 600; margin-top: 2px; }
-    .bias-note { font-size: 0.88em; color: #374151; background: white; border: 1px solid #e2e4e8;
-                 border-radius: 8px; padding: 10px 14px; margin-top: 10px; line-height: 1.5; }
-    .story-banner { font-size: 0.88em; color: #1e293b; background: #f8fafc; border-left: 4px solid #2563eb;
-                    border-top: 1px solid #e2e4e8; border-right: 1px solid #e2e4e8; border-bottom: 1px solid #e2e4e8;
-                    border-radius: 6px; padding: 10px 14px; margin: 10px 0 8px; line-height: 1.5; }
-    .chart-box { background: white; border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px; margin: 14px 0; }
-    table.data-table { border-collapse: collapse; width: 100%; background: white; font-size: 0.85em; }
-    table.data-table th, table.data-table td { border: 1px solid #e2e4e8; padding: 6px 10px; text-align: right; white-space: nowrap; }
-    table.data-table th:first-child, table.data-table td:first-child { text-align: left; }
-    table.data-table th { background: #eef1f5; cursor: pointer; user-select: none; position: sticky; top: 0; }
-    table.data-table th:hover { background: #dfe4ea; }
-    table.data-table tbody tr:nth-child(even) { background: #fafbfc; }
-    table.data-table tbody tr.flagged-row { background: #fdecea; color: #9a3412; }
-    table.data-table tbody tr:hover { background: #dbeafe !important; }
-    .note { color: #666; font-size: 0.88em; font-style: italic; margin: 4px 0 10px; }
-    .table-wrap { max-height: 600px; overflow: auto; border: 1px solid #e2e4e8; border-radius: 8px; }
-    .filter-bar { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-end; background: white;
-                  border: 1px solid #e2e4e8; border-radius: 8px; padding: 12px 16px; margin: 10px 0 14px; }
-    .filter-field { display: flex; flex-direction: column; gap: 4px; }
-    .filter-field label { font-size: 0.72em; color: #777; text-transform: uppercase; letter-spacing: 0.03em; }
-    .filter-field select, .filter-field input[type="number"] { padding: 5px 8px; border: 1px solid #ccd2da; border-radius: 6px;
-                  font-size: 0.9em; }
-    .filter-field input[type="number"] { width: 75px; }
-    .slider-group { display: flex; align-items: center; gap: 8px; }
-    .filter-field input[type="range"] { accent-color: #2563eb; cursor: pointer; width: 110px; }
-    .filter-reset { padding: 6px 14px; border: 1px solid #ccd2da; border-radius: 6px; background: #f1f3f6;
-                    cursor: pointer; font-size: 0.85em; height: 30px; }
-    .filter-reset:hover { background: #e2e6eb; }
-    .filter-count { font-size: 0.85em; color: #555; margin-left: auto; align-self: center; }
-"""
-
-SORT_JS = """
-function goToWatchlistTicker(rawVal) {
-    const clean = (rawVal || '').trim().toUpperCase();
-    if (!clean) return;
-    window.location.href = clean + '.html';
-}
-
-function handleWatchlistSubmit(event) {
-    event.preventDefault();
-    const inputEl = document.getElementById('watchlist-input');
-    const selectEl = document.getElementById('watchlist-select');
-    const chosen = (inputEl && inputEl.value.trim()) ? inputEl.value.trim() : (selectEl ? selectEl.value : '');
-    goToWatchlistTicker(chosen);
-    return false;
-}
-
-function sortTable(tableId, colIdx) {
-    const table = document.getElementById(tableId);
-    const tbody = table.tBodies[0];
-    const rows = Array.from(tbody.rows);
-    const asc = table.dataset.sortCol == colIdx ? table.dataset.sortDir !== "asc" : true;
-    rows.sort((a, b) => {
-        const xText = a.cells[colIdx].innerText.trim();
-        const yText = b.cells[colIdx].innerText.trim();
-        const xNum = parseFloat(xText.replace(/[^0-9.\-]/g, ""));
-        const yNum = parseFloat(yText.replace(/[^0-9.\-]/g, ""));
-        const bothNumeric = !isNaN(xNum) && !isNaN(yNum) && xText.match(/^-?[\d.,]+%?$/) && yText.match(/^-?[\d.,]+%?$/);
-        if (bothNumeric) {
-            return asc ? xNum - yNum : yNum - xNum;
-        }
-        return asc ? xText.localeCompare(yText) : yText.localeCompare(xText);
-    });
-    table.dataset.sortCol = colIdx;
-    table.dataset.sortDir = asc ? "asc" : "desc";
-    rows.forEach(r => tbody.appendChild(r));
-}
-
-function getTickerStorageKey() {
-    const parts = window.location.pathname.split('/');
-    const last = parts[parts.length - 1] || 'DEFAULT.html';
-    const ticker = last.replace(/\.html$/i, '').toUpperCase();
-    return 'options_filter_state_' + ticker;
-}
-
-function saveFilterState() {
-    const state = {
-        type: document.getElementById('filter-type').value,
-        dte: document.getElementById('filter-dte-num').value,
-        maxDte: document.getElementById('filter-max-dte-num').value,
-        price: document.getElementById('filter-price-num').value,
-        vol: document.getElementById('filter-vol-num').value,
-        spread: document.getElementById('filter-spread-num').value,
-        oi: document.getElementById('filter-oi-num').value
-    };
-    localStorage.setItem(getTickerStorageKey(), JSON.stringify(state));
-}
-
-function loadFilterState() {
-    const saved = localStorage.getItem(getTickerStorageKey());
-    if (!saved) return;
-    try {
-        const state = JSON.parse(saved);
-        if (state.type !== undefined) document.getElementById('filter-type').value = state.type;
-
-        const pairs = [
-            ['filter-dte-slider', 'filter-dte-num', state.dte],
-            ['filter-max-dte-slider', 'filter-max-dte-num', state.maxDte],
-            ['filter-price-slider', 'filter-price-num', state.price],
-            ['filter-vol-slider', 'filter-vol-num', state.vol],
-            ['filter-spread-slider', 'filter-spread-num', state.spread],
-            ['filter-oi-slider', 'filter-oi-num', state.oi]
-        ];
-
-        pairs.forEach(([sId, nId, val]) => {
-            if (val !== undefined && val !== "") {
-                const slider = document.getElementById(sId);
-                const num = document.getElementById(nId);
-                if (slider) slider.value = val;
-                if (num) num.value = val;
-            }
-        });
-    } catch (e) {
-        console.error('Failed to restore filter state', e);
-    }
-}
-
-function syncInputs(sliderId, numId) {
-    const slider = document.getElementById(sliderId);
-    const num = document.getElementById(numId);
-    if (!slider || !num) return;
-    slider.addEventListener('input', () => {
-        num.value = slider.value;
-        saveFilterState();
-        filterTable();
-    });
-    num.addEventListener('input', () => {
-        slider.value = num.value;
-        saveFilterState();
-        filterTable();
-    });
-}
-
-function filterTable() {
-    const typeVal = document.getElementById('filter-type').value;
-    const minDteRaw = parseFloat(document.getElementById('filter-dte-num').value);
-    const minDte = isNaN(minDteRaw) ? 0 : minDteRaw;
-    const maxDteRaw = parseFloat(document.getElementById('filter-max-dte-num').value);
-    const maxDte = isNaN(maxDteRaw) ? Infinity : maxDteRaw;
-    const maxPriceRaw = parseFloat(document.getElementById('filter-price-num').value);
-    const maxPrice = isNaN(maxPriceRaw) ? Infinity : maxPriceRaw;
-    const minVolRaw = parseFloat(document.getElementById('filter-vol-num').value);
-    const minVol = isNaN(minVolRaw) ? 0 : minVolRaw;
-    const maxSpreadRaw = parseFloat(document.getElementById('filter-spread-num').value);
-    const maxSpread = isNaN(maxSpreadRaw) ? Infinity : maxSpreadRaw;
-    const minOiRaw = parseFloat(document.getElementById('filter-oi-num').value);
-    const minOi = isNaN(minOiRaw) ? 0 : minOiRaw;
-
-    const tbody = document.querySelector('#scan-results-table tbody');
-    if (!tbody) return;
-    const rows = tbody.rows;
-    let visibleCount = 0;
-
-    for (let r of rows) {
-        const type = r.cells[0].innerText.trim();
-        const dte = parseFloat(r.cells[2].innerText) || 0;
-        const last = parseFloat(r.cells[5].innerText) || 0;
-        const avgSpreadText = r.cells[9].innerText.trim();
-        const avgSpread = avgSpreadText === '-' ? Infinity : parseFloat(avgSpreadText);
-        const vol = parseFloat(r.cells[10].innerText) || 0;
-        const oi = parseFloat(r.cells[11].innerText) || 0;
-
-        let match = true;
-        if (typeVal !== 'ALL' && type !== typeVal) match = false;
-        if (dte < minDte) match = false;
-        if (dte > maxDte) match = false;
-        if (last > maxPrice) match = false;
-        if (vol < minVol) match = false;
-        if (avgSpread > maxSpread) match = false;
-        if (oi < minOi) match = false;
-
-        r.style.display = match ? '' : 'none';
-        if (match) visibleCount++;
-    }
-    const countEl = document.getElementById('filter-count');
-    if (countEl) countEl.innerText = visibleCount + ' matching contracts';
-}
-
-function resetFilters() {
-    localStorage.removeItem(getTickerStorageKey());
-
-    document.getElementById('filter-type').value = 'ALL';
-    const resets = [
-        ['filter-dte-slider', 'filter-dte-num', 0],
-        ['filter-max-dte-slider', 'filter-max-dte-num', 365],
-        ['filter-price-slider', 'filter-price-num', 999],
-        ['filter-vol-slider', 'filter-vol-num', 0],
-        ['filter-spread-slider', 'filter-spread-num', 100],
-        ['filter-oi-slider', 'filter-oi-num', 0]
-    ];
-    resets.forEach(([s, n, v]) => {
-        const slider = document.getElementById(s);
-        const num = document.getElementById(n);
-        if (slider) slider.value = v;
-        if (num) num.value = v;
-    });
-    filterTable();
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    syncInputs('filter-dte-slider', 'filter-dte-num');
-    syncInputs('filter-max-dte-slider', 'filter-max-dte-num');
-    syncInputs('filter-price-slider', 'filter-price-num');
-    syncInputs('filter-vol-slider', 'filter-vol-num');
-    syncInputs('filter-spread-slider', 'filter-spread-num');
-    syncInputs('filter-oi-slider', 'filter-oi-num');
-
-    loadFilterState();
-    filterTable();
-});
-"""
+def _clean_num(val, decimals=2):
+    if val is None or (isinstance(val, float) and (math.isnan(val) or not math.isfinite(val))):
+        return None
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return round(f, decimals)
 
 
-def summarize_order_flow_narrative(history):
-    if not history:
-        return "Awaiting minutely snapshots to build the order-flow narrative."
-
-    first = history[0]
-    latest = history[-1]
-    n = len(history)
-
-    if n == 1:
-        vol_txt = (
-            f"Call volume share is {latest['call_vol_share']:.1f}%"
-            if latest.get("call_vol_share") is not None
-            else "Call/put volume share is balanced"
-        )
-        skew_txt = (
-            f"Put-Call IV skew stands at {latest['skew_diff_pct']:+.2f}%"
-            if latest.get("skew_diff_pct") is not None
-            else "IV skew is flat"
-        )
-        return (
-            f"Initial snapshot (#{latest['round']} at {latest['timestamp']}): "
-            f"Bias is <strong>{latest['bias']}</strong> (score {latest['score']:+.2f}; yellow neutral zone is -0.35 to +0.35). "
-            f"{vol_txt}; {skew_txt}. Additional scheduled ticks will chart directional momentum."
-        )
-
-    score_delta = latest["score"] - first["score"]
-    if score_delta >= 0.15:
-        trend_phrase = f"strengthened bullishly ({first['score']:+.2f} &rarr; {latest['score']:+.2f})"
-    elif score_delta <= -0.15:
-        trend_phrase = f"shifted bearishly ({first['score']:+.2f} &rarr; {latest['score']:+.2f})"
-    else:
-        trend_phrase = f"held steady ({first['score']:+.2f} &rarr; {latest['score']:+.2f})"
-
-    flips = []
-    for i in range(1, n):
-        if history[i]["bias"] != history[i - 1]["bias"]:
-            flips.append(f"{history[i - 1]['bias']}&rarr;{history[i]['bias']} @ {history[i]['timestamp']}")
-
-    flip_txt = f" Regime shifts: {', '.join(flips)}." if flips else f" Regime remained <strong>{latest['bias']}</strong> across all {n} samples."
-
-    vol_shift_txt = ""
-    if first.get("call_vol_share") is not None and latest.get("call_vol_share") is not None:
-        dv = latest["call_vol_share"] - first["call_vol_share"]
-        vol_shift_txt = f" Call volume flow moved {first['call_vol_share']:.1f}% &rarr; {latest['call_vol_share']:.1f}% ({dv:+.1f}%)."
-
-    price_txt = ""
-    if first.get("spot") is not None and latest.get("spot") is not None and first["spot"] > 0:
-        dp = latest["spot"] - first["spot"]
-        dp_pct = (dp / first["spot"]) * 100.0
-        price_txt = f" Underlying moved ${first['spot']:.2f} &rarr; ${latest['spot']:.2f} ({dp_pct:+.2f}%)."
-
-    return (
-        f"Across <strong>{n}</strong> snapshots ({first['timestamp']} &ndash; {latest['timestamp']}), "
-        f"composite order-flow bias {trend_phrase}.{flip_txt}{vol_shift_txt}{price_txt}"
-    )
-
-
-def _compute_sensitive_flow_deltas(values):
-    base = next((float(v) for v in values if v is not None and math.isfinite(float(v))), None)
-    if base is None:
-        return [None for _ in values]
-    deltas = []
-    for v in values:
-        if v is None or not math.isfinite(float(v)):
-            deltas.append(None)
-        else:
-            deltas.append(round(float(v) - base, 2))
-    return deltas
-
-
-def _symmetric_zoom_range(series_list, min_span=6.0, pad_ratio=0.25):
-    nums = [
-        abs(float(val))
-        for s in series_list
-        for val in s
-        if val is not None and math.isfinite(float(val))
-    ]
-    peak = max(nums) if nums else 0.0
-    bound = max(min_span, peak * (1.0 + pad_ratio))
-    return [-round(bound, 2), round(bound, 2)]
-
-
-def build_order_flow_story_chart(ticker, history):
-    if not history:
-        return "<p>No market interpretation history recorded yet.</p>"
-
-    times = [h["timestamp"] for h in history]
-    rounds = [h["round"] for h in history]
-    scores = [h["score"] for h in history]
-    biases = [h["bias"] for h in history]
-    summaries = [h["summary"] for h in history]
-    spots = [h["spot"] for h in history]
-    call_vols = [h["call_vol_share"] for h in history]
-    call_ois = [h["call_oi_share"] for h in history]
-    d_call_vols = _compute_sensitive_flow_deltas(call_vols)
-    d_call_ois = _compute_sensitive_flow_deltas(call_ois)
-    skews = [h["skew_diff_pct"] for h in history]
-    slopes = [h["iv_slope_pct"] for h in history]
-    atm_ivs = [h["atm_iv"] for h in history]
-
-    fig = make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        row_heights=[0.42, 0.29, 0.29],
-        specs=[[{"secondary_y": True}], [{"secondary_y": False}], [{"secondary_y": True}]],
-        subplot_titles=(
-            f"{ticker} Composite Order-Flow Bias Score vs. Spot Price (Yellow Strip = -0.35 to +0.35)",
-            "Liquidity-Weighted Order Flow Shift (Δ vs. First Sample — High Sensitivity)",
-            "Volatility Structure (Put-Call IV Skew %, Term Slope % & ATM IV %)",
-        ),
-    )
-
-    fig.add_hrect(y0=0.35, y1=2.4, fillcolor="rgba(22, 163, 74, 0.07)", line_width=0, row=1, col=1)
-    fig.add_hrect(y0=-0.35, y1=0.35, fillcolor="rgba(250, 204, 21, 0.28)", line_width=0, row=1, col=1)
-    fig.add_hrect(y0=-2.4, y1=-0.35, fillcolor="rgba(220, 38, 38, 0.07)", line_width=0, row=1, col=1)
-
-    fig.add_hline(y=0.35, line_dash="dash", line_color="#eab308", line_width=1.2, row=1, col=1)
-    fig.add_hline(y=-0.35, line_dash="dash", line_color="#eab308", line_width=1.2, row=1, col=1)
-    fig.add_hline(y=0.0, line_dash="dot", line_color="#94a3b8", line_width=1, row=1, col=1)
-
-    marker_colors = [
-        "#16a34a" if b == "Bullish" else ("#dc2626" if b == "Bearish" else "#ca8a04")
-        for b in biases
-    ]
-    hover_story = [
-        f"<b>Sample #{r} ({t})</b><br>"
-        f"Regime: <b>{b}</b> (Score: {s:+.2f})<br>"
-        f"Drivers: {summ}"
-        for r, t, b, s, summ in zip(rounds, times, biases, scores, summaries)
-    ]
-
-    fig.add_trace(
-        go.Scatter(
-            x=times,
-            y=scores,
-            name="Bias Score",
-            mode="lines+markers",
-            line=dict(color="#1d4ed8", width=2.5),
-            marker=dict(size=9, color=marker_colors, line=dict(width=1.5, color="white")),
-            text=hover_story,
-            hovertemplate="%{text}<extra></extra>",
-        ),
-        row=1,
-        col=1,
-        secondary_y=False,
-    )
-
-    for i in range(1, len(history)):
-        if biases[i] != biases[i - 1]:
-            flip_color = "#15803d" if biases[i] == "Bullish" else ("#b91c1c" if biases[i] == "Bearish" else "#a16207")
-            fig.add_annotation(
-                x=times[i],
-                y=scores[i],
-                text=f"Flip: {biases[i]}",
-                showarrow=True,
-                arrowhead=2,
-                ax=0,
-                ay=-26 if scores[i] >= 0 else 26,
-                font=dict(size=11, color=flip_color),
-                bgcolor="rgba(255,255,255,0.92)",
-                bordercolor=flip_color,
-                borderwidth=1,
-                row=1,
-                col=1,
-            )
-
-    if any(sp is not None for sp in spots):
-        fig.add_trace(
-            go.Scatter(
-                x=times,
-                y=spots,
-                name="Spot Price ($)",
-                mode="lines+markers",
-                line=dict(color="#f59e0b", width=2, dash="dash"),
-                marker=dict(size=6, color="#f59e0b"),
-                hovertemplate="Spot: $%{y:.2f}<extra></extra>",
-            ),
-            row=1,
-            col=1,
-            secondary_y=True,
-        )
-
-    fig.add_hline(y=0.0, line_dash="dot", line_color="#64748b", line_width=1.2, row=2, col=1)
-    if any(v is not None for v in d_call_vols):
-        vol_hover = [
-            f"Δ Call Vol: {dv:+.2f} pts (Share: {cv:.1f}%)" if (dv is not None and cv is not None) else "Δ Call Vol: N/A"
-            for dv, cv in zip(d_call_vols, call_vols)
-        ]
-        fig.add_trace(
-            go.Scatter(
-                x=times,
-                y=d_call_vols,
-                name="Δ Call Vol Share (pts)",
-                mode="lines+markers",
-                line=dict(color="#0d9488", width=2.4),
-                marker=dict(size=8, color="#0d9488", line=dict(width=1.2, color="white")),
-                text=vol_hover,
-                hovertemplate="%{text}<extra></extra>",
-            ),
-            row=2,
-            col=1,
-        )
-    if any(o is not None for o in d_call_ois):
-        oi_hover = [
-            f"Δ Call OI: {do:+.2f} pts (Share: {co:.1f}%)" if (do is not None and co is not None) else "Δ Call OI: N/A"
-            for do, co in zip(d_call_ois, call_ois)
-        ]
-        fig.add_trace(
-            go.Scatter(
-                x=times,
-                y=d_call_ois,
-                name="Δ Call OI Share (pts)",
-                mode="lines+markers",
-                line=dict(color="#6366f1", width=2.2, dash="dash"),
-                marker=dict(size=7, color="#6366f1", line=dict(width=1.2, color="white")),
-                text=oi_hover,
-                hovertemplate="%{text}<extra></extra>",
-            ),
-            row=2,
-            col=1,
-        )
-
-    flow_y_range = _symmetric_zoom_range([d_call_vols, d_call_ois], min_span=5.0, pad_ratio=0.30)
-
-    fig.add_hline(y=0.0, line_dash="dot", line_color="#94a3b8", line_width=1, row=3, col=1, secondary_y=False)
-    if any(sk is not None for sk in skews):
-        fig.add_trace(
-            go.Scatter(
-                x=times,
-                y=skews,
-                name="Put-Call IV Skew %",
-                mode="lines+markers",
-                line=dict(color="#e11d48", width=2),
-                marker=dict(size=6),
-                hovertemplate="Put-Call Skew: %{y:+.2f}%<extra></extra>",
-            ),
-            row=3,
-            col=1,
-            secondary_y=False,
-        )
-    if any(sl is not None for sl in slopes):
-        fig.add_trace(
-            go.Scatter(
-                x=times,
-                y=slopes,
-                name="IV Term Slope %",
-                mode="lines+markers",
-                line=dict(color="#8b5cf6", width=1.8, dash="dash"),
-                marker=dict(size=6),
-                hovertemplate="IV Term Slope: %{y:+.2f}%<extra></extra>",
-            ),
-            row=3,
-            col=1,
-            secondary_y=False,
-        )
-    if any(iv is not None for iv in atm_ivs):
-        fig.add_trace(
-            go.Scatter(
-                x=times,
-                y=atm_ivs,
-                name="ATM IV %",
-                mode="lines+markers",
-                line=dict(color="#0284c7", width=2),
-                marker=dict(size=6),
-                hovertemplate="ATM IV: %{y:.2f}%<extra></extra>",
-            ),
-            row=3,
-            col=1,
-            secondary_y=True,
-        )
-
-    fig.update_yaxes(title_text="Bias Score", range=[-2.4, 2.4], row=1, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="Spot ($)", showgrid=False, row=1, col=1, secondary_y=True)
-    fig.update_yaxes(title_text="Δ Flow (pts)", range=flow_y_range, zeroline=False, row=2, col=1)
-    fig.update_yaxes(title_text="Skew / Slope %", row=3, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="ATM IV %", showgrid=False, row=3, col=1, secondary_y=True)
-    fig.update_xaxes(title_text="Sample Timestamp", row=3, col=1)
-
-    fig.update_layout(
-        template="plotly_white",
-        height=760,
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="left", x=0),
-        margin=dict(l=60, r=60, t=75, b=50),
-    )
-    return fig.to_html(full_html=False, include_plotlyjs="cdn")
-
-
-def build_interactive_html(
-    ticker,
-    underlying_price,
-    full_df,
-    filtered_df,
-    scan_warnings,
-    vol_insights,
-    max_premium=None,
-    sample_rounds=1,
-    market_history=None,
-    watchlist_tickers=None,
-):
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    market_history = market_history or []
-
-    wl_list = list(watchlist_tickers) if watchlist_tickers else [ticker]
-    if ticker not in wl_list:
-        wl_list = [ticker] + wl_list
-    datalist_opts = "\n".join(f'<option value="{html_lib.escape(t)}">' for t in wl_list)
-    select_opts = "\n".join(
-        f'<option value="{html_lib.escape(t)}"{" selected" if t == ticker else ""}>{html_lib.escape(t)}</option>'
-        for t in wl_list
-    )
-    watchlist_bar_html = f"""
-    <form class="watchlist-bar" onsubmit="return handleWatchlistSubmit(event);">
-        <label for="watchlist-input">Watchlist Ticker ({len(wl_list)}):</label>
-        <input id="watchlist-input" list="watchlist-tickers" placeholder="Type ticker (e.g. XLE)" autocomplete="off">
-        <datalist id="watchlist-tickers">
-            {datalist_opts}
-        </datalist>
-        <select id="watchlist-select" onchange="goToWatchlistTicker(this.value)">
-            {select_opts}
-        </select>
-        <button type="submit" class="watchlist-go-btn">View Ticker</button>
-    </form>
-    """
-
-    warn_html = ""
-    if scan_warnings:
-        items = "".join(f"<li>{html_lib.escape(str(w))}</li>" for w in scan_warnings)
-        warn_html = f"""
-        <div class="warning-banner">
-            <h2>Data Quality Warnings</h2>
-            <ul>{items}</ul>
-        </div>
-        """
-
-    total_contracts = len(full_df)
-    filtered_count = len(filtered_df)
-    call_count = len(filtered_df[filtered_df["type"] == "Call"]) if not filtered_df.empty else 0
-    put_count = len(filtered_df[filtered_df["type"] == "Put"]) if not filtered_df.empty else 0
-
-    hv_str = f"{vol_insights['current_30d_hv']:.1f}%" if vol_insights.get("current_30d_hv") is not None else "-"
-    iv_str = f"{vol_insights['atm_iv']:.1f}%" if vol_insights.get("atm_iv") is not None else "-"
-    ratio_str = f"{vol_insights['iv_hv_ratio']:.2f}" if vol_insights.get("iv_hv_ratio") is not None else "-"
-    rank_str = f"{vol_insights['hv_rank']:.1f}%" if vol_insights.get("hv_rank") is not None else "-"
-    bias_str = html_lib.escape(str(vol_insights.get("pricing_bias", "N/A")))
-
-    map_bias = vol_insights.get("map_bias", "Neutral")
-    map_bias_score = vol_insights.get("map_bias_score", 0.0)
-    map_bias_summary = html_lib.escape(str(vol_insights.get("map_bias_summary", "")))
-    bias_css_cls = {
-        "Bullish": "bias-bullish",
-        "Bearish": "bias-bearish",
-    }.get(map_bias, "bias-neutral")
-
-    story_narrative_html = summarize_order_flow_narrative(market_history)
-    chart_story_html = build_order_flow_story_chart(ticker, market_history)
-
-    chart_liquidity_html = "<p>No data to display liquidity map.</p>"
-    if not filtered_df.empty:
-        plot_data = filtered_df.copy()
-        spread_series = plot_data["avgSpreadPct"] if "avgSpreadPct" in plot_data.columns else plot_data["spreadPct"]
-        plot_data["spreadPct_clean"] = pd.to_numeric(spread_series, errors="coerce").fillna(100.0)
-        plot_data["openInterest_clean"] = pd.to_numeric(plot_data["openInterest"], errors="coerce").fillna(1.0).clip(lower=1.0)
-        plot_data["volume_clean"] = pd.to_numeric(plot_data["volume"], errors="coerce").fillna(0.0)
-        fig_liq = px.scatter(
-            plot_data,
-            x="volume_clean",
-            y="spreadPct_clean",
-            size="openInterest_clean",
-            color="type",
-            hover_data=["strike", "expiration", "daysToExpiration", "lastPrice", "bid", "ask"],
-            labels={"volume_clean": "Volume", "spreadPct_clean": "Avg Spread %", "type": "Option Type"},
-            title=f"{ticker} Liquidity Map (Volume vs Avg Spread %)",
-        )
-        fig_liq.update_layout(template="plotly_white", height=420)
-        chart_liquidity_html = fig_liq.to_html(full_html=False, include_plotlyjs=False)
-
-    chart_iv_html = "<p>No reliable IV data available for smile chart.</p>"
-    iv_df = filtered_df[filtered_df["ivReliable"] & filtered_df["impliedVolatility"].notna()] if not filtered_df.empty else pd.DataFrame()
-    if not iv_df.empty:
-        fig_iv = px.line(
-            iv_df.sort_values(["daysToExpiration", "strike"]),
-            x="strike",
-            y="impliedVolatility",
-            color="expiration",
-            line_dash="type",
-            hover_data=["daysToExpiration"],
-            title=f"{ticker} Implied Volatility Smile by Expiration",
-            labels={"strike": "Strike Price", "impliedVolatility": "Implied Volatility"},
-        )
-        fig_iv.update_layout(template="plotly_white", height=420)
-        chart_iv_html = fig_iv.to_html(full_html=False, include_plotlyjs=False)
-
-    max_price_init = max_premium if max_premium is not None else 999.0
-    price_display = f"${underlying_price:.2f}" if underlying_price is not None and not math.isnan(underlying_price) else "N/A"
-
-    table_rows = []
+def serialize_ticker_snapshot(ticker, underlying_price, full_df, filtered_df, warnings, vol_insights, sample_round, fetched_at):
+    contracts = []
     for _, row in filtered_df.iterrows():
-        is_flagged = bool(row.get("noBid", False) or row.get("staleQuote", False) or row.get("arbitrageViolation", False))
-        row_cls = ' class="flagged-row"' if is_flagged else ""
+        contracts.append({
+            "type": str(row.get("type", "-")),
+            "exp": str(row.get("expiration", "-")),
+            "dte": int(pd.to_numeric(row.get("daysToExpiration", 0), errors="coerce") or 0),
+            "strike": _clean_num(row.get("strike"), 2),
+            "moneyness": _clean_num(row.get("moneynessPct"), 2),
+            "last": _clean_num(row.get("lastPrice"), 2),
+            "bid": _clean_num(row.get("bid"), 2),
+            "ask": _clean_num(row.get("ask"), 2),
+            "mid": _clean_num(row.get("midPrice"), 2),
+            "avgSpread": _clean_num(row.get("avgSpreadPct", row.get("spreadPct")), 2),
+            "samples": int(pd.to_numeric(row.get("spreadSampleCount", 0), errors="coerce") or 0),
+            "vol": int(pd.to_numeric(row.get("volume", 0), errors="coerce") or 0),
+            "oi": int(pd.to_numeric(row.get("openInterest", 0), errors="coerce") or 0),
+            "volOi": _clean_num(row.get("volumeOiRatio"), 2),
+            "iv": _clean_num(
+                float(row.get("impliedVolatility")) * 100.0
+                if row.get("impliedVolatility") is not None
+                and not pd.isna(row.get("impliedVolatility"))
+                and math.isfinite(float(row.get("impliedVolatility")))
+                else None,
+                2,
+            ),
+            "delta": _clean_num(row.get("delta"), 3),
+            "theta": _clean_num(row.get("theta"), 3),
+            "noBid": bool(row.get("noBid", False)),
+            "stale": bool(row.get("staleQuote", False)),
+            "arb": bool(row.get("arbitrageViolation", False)),
+        })
 
-        def fmt_val(v, is_pct=False, decimals=2):
-            if v is None or pd.isna(v) or not math.isfinite(float(v)):
-                return "-"
-            num = float(v)
-            return f"{num:.{decimals}f}%" if is_pct else f"{num:.{decimals}f}"
+    call_count = sum(1 for c in contracts if c["type"] == "Call")
+    put_count = sum(1 for c in contracts if c["type"] == "Put")
 
-        avg_spread_val = row.get("avgSpreadPct", row.get("spreadPct"))
-        sample_cnt = int(row.get("spreadSampleCount", 0) or 0)
-        avg_spread_title = html_lib.escape(f"Averaged across {sample_cnt} sample(s)")
-
-        cells = [
-            html_lib.escape(str(row.get("type", "-"))),
-            html_lib.escape(str(row.get("expiration", "-"))),
-            str(int(pd.to_numeric(row.get("daysToExpiration", 0), errors="coerce") or 0)),
-            fmt_val(row.get("strike")),
-            fmt_val(row.get("moneynessPct"), is_pct=True),
-            fmt_val(row.get("lastPrice")),
-            fmt_val(row.get("bid")),
-            fmt_val(row.get("ask")),
-            fmt_val(row.get("midPrice")),
-            fmt_val(avg_spread_val, is_pct=True),
-            str(int(pd.to_numeric(row.get("volume", 0), errors="coerce") or 0)),
-            str(int(pd.to_numeric(row.get("openInterest", 0), errors="coerce") or 0)),
-            fmt_val(row.get("volumeOiRatio")),
-            fmt_val(row.get("impliedVolatility"), is_pct=True),
-            fmt_val(row.get("delta"), decimals=3),
-            fmt_val(row.get("theta"), decimals=3),
-            "YES" if row.get("noBid") else "No",
-            "YES" if row.get("staleQuote") else "No",
-        ]
-        rendered_cells = []
-        for idx, c in enumerate(cells):
-            if idx == 9:
-                rendered_cells.append(f'<td title="{avg_spread_title}">{c}</td>')
-            else:
-                rendered_cells.append(f"<td>{c}</td>")
-        table_rows.append(f"<tr{row_cls}>" + "".join(rendered_cells) + "</tr>")
-
-    table_body = "\n".join(table_rows)
-
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{ticker} Options Scan Dashboard</title>
-    <style>{DASHBOARD_CSS}</style>
-    <script>{SORT_JS}</script>
-</head>
-<body>
-    {watchlist_bar_html}
-    <div class="header-row">
-        <div>
-            <h1>{ticker} Options Scanner Dashboard</h1>
-            <div class="meta">Underlying Price: <strong>{price_display}</strong> | Fetched: {now_str} | Spread Samples: <strong>{sample_rounds}</strong> (every {SPREAD_SAMPLE_INTERVAL_SECONDS}s)</div>
-        </div>
-    </div>
-
-    {warn_html}
-
-    <h2>Volatility, Map Bias & Pricing Overview</h2>
-    <div class="stat-row">
-        <div class="stat-box {bias_css_cls}">
-            <div class="label">Underlying Bias (Maps)</div>
-            <div class="value">{map_bias}</div>
-            <div class="sub">Score: {map_bias_score:+.2f}</div>
-        </div>
-        <div class="stat-box highlight">
-            <div class="label">30D Realized HV</div>
-            <div class="value">{hv_str}</div>
-            <div class="sub">Past Movement</div>
-        </div>
-        <div class="stat-box highlight">
-            <div class="label">ATM Implied Vol (IV)</div>
-            <div class="value">{iv_str}</div>
-            <div class="sub">Market Expectation</div>
-        </div>
-        <div class="stat-box highlight">
-            <div class="label">IV / HV Ratio</div>
-            <div class="value">{ratio_str}</div>
-            <div class="sub">{bias_str}</div>
-        </div>
-        <div class="stat-box highlight">
-            <div class="label">HV Rank (1Y)</div>
-            <div class="value">{rank_str}</div>
-            <div class="sub">Range Relative</div>
-        </div>
-    </div>
-    <div class="bias-note"><strong>Latest Map Interpretation ({map_bias}):</strong> {map_bias_summary}</div>
-
-    <div class="stat-row" style="margin-top: 12px;">
-        <div class="stat-box"><div class="label">Total Chain Contracts</div><div class="value">{total_contracts}</div></div>
-        <div class="stat-box"><div class="label">Matching Filter</div><div class="value">{filtered_count}</div></div>
-        <div class="stat-box"><div class="label">Calls</div><div class="value">{call_count}</div></div>
-        <div class="stat-box"><div class="label">Puts</div><div class="value">{put_count}</div></div>
-    </div>
-
-    <h2>Order Flow Story & Market Interpretation Trend</h2>
-    <div class="story-banner"><strong>Order Flow Story:</strong> {story_narrative_html}</div>
-    <div class="chart-box">{chart_story_html}</div>
-
-    <h2>Liquidity Map & Implied Volatility by Expiration</h2>
-    <div class="chart-box">{chart_liquidity_html}</div>
-    <div class="chart-box">{chart_iv_html}</div>
-
-    <h2>Filtered Option Contracts</h2>
-    <div class="filter-bar">
-        <div class="filter-field">
-            <label>Type</label>
-            <select id="filter-type" onchange="saveFilterState(); filterTable()">
-                <option value="ALL">All</option>
-                <option value="Call">Call</option>
-                <option value="Put">Put</option>
-            </select>
-        </div>
-        <div class="filter-field">
-            <label>Min DTE</label>
-            <div class="slider-group">
-                <input type="range" id="filter-dte-slider" min="0" max="365" value="0">
-                <input type="number" id="filter-dte-num" min="0" max="365" value="0">
-            </div>
-        </div>
-        <div class="filter-field">
-            <label>Max DTE</label>
-            <div class="slider-group">
-                <input type="range" id="filter-max-dte-slider" min="0" max="365" value="365">
-                <input type="number" id="filter-max-dte-num" min="0" max="365" value="365">
-            </div>
-        </div>
-        <div class="filter-field">
-            <label>Max Option Price ($)</label>
-            <div class="slider-group">
-                <input type="range" id="filter-price-slider" min="0" max="1000" value="{max_price_init}">
-                <input type="number" id="filter-price-num" min="0" max="1000" value="{max_price_init}">
-            </div>
-        </div>
-        <div class="filter-field">
-            <label>Min Volume</label>
-            <div class="slider-group">
-                <input type="range" id="filter-vol-slider" min="0" max="5000" value="0">
-                <input type="number" id="filter-vol-num" min="0" max="100000" value="0">
-            </div>
-        </div>
-        <div class="filter-field">
-            <label>Max Avg Spread %</label>
-            <div class="slider-group">
-                <input type="range" id="filter-spread-slider" min="0" max="100" value="100">
-                <input type="number" id="filter-spread-num" min="0" max="100" value="100">
-            </div>
-        </div>
-        <div class="filter-field">
-            <label>Min OI</label>
-            <div class="slider-group">
-                <input type="range" id="filter-oi-slider" min="0" max="5000" value="0">
-                <input type="number" id="filter-oi-num" min="0" max="100000" value="0">
-            </div>
-        </div>
-        <button class="filter-reset" onclick="resetFilters()">Reset Filters</button>
-        <div class="filter-count" id="filter-count">{filtered_count} matching contracts</div>
-    </div>
-
-    <div class="note">Click any table header to sort. Avg Spread% averages valid spread% samples across snapshots (hover cell for sample count). Rows with data-quality issues are highlighted in red.</div>
-    <div class="table-wrap">
-        <table class="data-table" id="scan-results-table" data-sort-col="" data-sort-dir="">
-            <thead>
-                <tr>
-                    <th onclick="sortTable('scan-results-table', 0)">Type</th>
-                    <th onclick="sortTable('scan-results-table', 1)">Exp</th>
-                    <th onclick="sortTable('scan-results-table', 2)">DTE</th>
-                    <th onclick="sortTable('scan-results-table', 3)">Strike</th>
-                    <th onclick="sortTable('scan-results-table', 4)">Moneyness%</th>
-                    <th onclick="sortTable('scan-results-table', 5)">Last</th>
-                    <th onclick="sortTable('scan-results-table', 6)">Bid</th>
-                    <th onclick="sortTable('scan-results-table', 7)">Ask</th>
-                    <th onclick="sortTable('scan-results-table', 8)">Mid</th>
-                    <th onclick="sortTable('scan-results-table', 9)">Avg Spread%</th>
-                    <th onclick="sortTable('scan-results-table', 10)">Vol</th>
-                    <th onclick="sortTable('scan-results-table', 11)">OI</th>
-                    <th onclick="sortTable('scan-results-table', 12)">Vol/OI</th>
-                    <th onclick="sortTable('scan-results-table', 13)">IV</th>
-                    <th onclick="sortTable('scan-results-table', 14)">Delta</th>
-                    <th onclick="sortTable('scan-results-table', 15)">Theta</th>
-                    <th onclick="sortTable('scan-results-table', 16)">NoBid</th>
-                    <th onclick="sortTable('scan-results-table', 17)">Stale</th>
-                </tr>
-            </thead>
-            <tbody>
-                {table_body}
-            </tbody>
-        </table>
-    </div>
-</body>
-</html>
-"""
+    return {
+        "ticker": ticker,
+        "spot": _clean_num(underlying_price, 2),
+        "fetched_at": fetched_at,
+        "sample_rounds": sample_round,
+        "warnings": warnings,
+        "insights": vol_insights,
+        "counts": {
+            "total": int(len(full_df)),
+            "filtered": int(len(filtered_df)),
+            "calls": int(call_count),
+            "puts": int(put_count),
+        },
+        "contracts": contracts,
+    }
 
 
 STATE_PATH = Path(os.getenv("STATE_FILE", "docs/data/state.json"))
+SNAPSHOTS_PATH = Path(os.getenv("SNAPSHOTS_FILE", "docs/data/snapshots.json"))
 
 
 class DashboardState:
-    def __init__(self, config, state_path: Path = STATE_PATH):
+    def __init__(self, config, state_path: Path = STATE_PATH, snapshots_path: Path = SNAPSHOTS_PATH):
         self.config = config
         self.state_path = state_path
-        self.dashboards = {}
+        self.snapshots_path = snapshots_path
         self.spread_history = {}
         self.market_history = {}
         self.sample_rounds = {}
+        self.snapshots = {}
         self._load()
 
     def _load(self):
-        if not self.state_path.exists():
-            return
-        try:
-            with open(self.state_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self.spread_history = data.get("spread_history", {})
-            self.market_history = data.get("market_history", {})
-            self.sample_rounds = data.get("sample_rounds", {})
-            print(f"[State] Loaded persisted history from {self.state_path}.")
-        except Exception as exc:
-            print(f"[State] Could not load {self.state_path} ({exc}); starting fresh.")
+        if self.state_path.exists():
+            try:
+                with open(self.state_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.spread_history = data.get("spread_history", {})
+                self.market_history = data.get("market_history", {})
+                self.sample_rounds = data.get("sample_rounds", {})
+                print(f"[State] Loaded persisted history from {self.state_path}.")
+            except Exception as exc:
+                print(f"[State] Could not load {self.state_path} ({exc}); starting fresh.")
+
+        if self.snapshots_path.exists():
+            try:
+                with open(self.snapshots_path, "r", encoding="utf-8") as f:
+                    snap_data = json.load(f)
+                if isinstance(snap_data, dict):
+                    self.snapshots = snap_data.get("tickers", snap_data)
+                print(f"[Snapshots] Loaded existing ticker snapshots from {self.snapshots_path}.")
+            except Exception as exc:
+                print(f"[Snapshots] Could not load {self.snapshots_path} ({exc}); starting fresh.")
 
     def save(self):
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1414,11 +636,23 @@ class DashboardState:
             "market_history": self.market_history,
             "spread_history": self.spread_history,
         }
-        tmp_path = self.state_path.with_suffix(".tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
+        tmp_state = self.state_path.with_suffix(".tmp")
+        with open(tmp_state, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
-        tmp_path.replace(self.state_path)
+        tmp_state.replace(self.state_path)
         print(f"[State] Saved persisted history to {self.state_path}.")
+
+        self.snapshots_path.parent.mkdir(parents=True, exist_ok=True)
+        snap_payload = {
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "watchlist": self.config.tickers,
+            "tickers": self.snapshots,
+        }
+        tmp_snap = self.snapshots_path.with_suffix(".tmp")
+        with open(tmp_snap, "w", encoding="utf-8") as f:
+            json.dump(snap_payload, f, separators=(",", ":"))
+        tmp_snap.replace(self.snapshots_path)
+        print(f"[Snapshots] Saved {len(self.snapshots)} ticker snapshots to {self.snapshots_path}.")
 
     def record_spread_sample(self, ticker, contract_key, spread_pct):
         ticker_hist = self.spread_history.setdefault(ticker, {})
@@ -1460,8 +694,8 @@ class DashboardState:
         self.sample_rounds[ticker] = self.sample_rounds.get(ticker, 0) + 1
         return self.sample_rounds[ticker]
 
-    def set_dashboard(self, ticker, html):
-        self.dashboards[ticker] = html
+    def set_snapshot(self, ticker, snapshot_obj):
+        self.snapshots[ticker] = snapshot_obj
 
 
 GLOBAL_STATE = None
@@ -1494,7 +728,7 @@ def print_minutely_data(ticker, underlying_price, full_df, filtered_df, vol_insi
     )
 
 
-def scan_and_cache_ticker(ticker, config, watchlist_tickers=None, force_refresh=False):
+def scan_and_cache_ticker(ticker, config):
     tk = yf.Ticker(ticker)
     underlying_price = get_current_price(tk)
     expirations = tk.options
@@ -1545,7 +779,7 @@ def scan_and_cache_ticker(ticker, config, watchlist_tickers=None, force_refresh=
     warnings = assess_snapshot_quality(full_df)
     vol_insights = get_volatility_insights(tk, full_df, underlying_price)
 
-    market_history = (
+    if GLOBAL_STATE:
         GLOBAL_STATE.record_market_snapshot(
             ticker,
             sample_round,
@@ -1553,41 +787,28 @@ def scan_and_cache_ticker(ticker, config, watchlist_tickers=None, force_refresh=
             vol_insights,
             timestamp_str=now_ts.strftime("%H:%M:%S"),
         )
-        if GLOBAL_STATE
-        else []
-    )
-
-    html = build_interactive_html(
-        ticker,
-        underlying_price,
-        full_df,
-        filtered_df,
-        warnings,
-        vol_insights,
-        config.max_premium,
-        sample_rounds=sample_round,
-        market_history=market_history,
-        watchlist_tickers=watchlist_tickers or config.tickers,
-    )
-
-    out_dir = Path(config.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / f"{ticker}.html"
-    out_file.write_text(html, encoding="utf-8")
-
-    if GLOBAL_STATE:
-        GLOBAL_STATE.set_dashboard(ticker, html)
+        snap_obj = serialize_ticker_snapshot(
+            ticker,
+            underlying_price,
+            full_df,
+            filtered_df,
+            warnings,
+            vol_insights,
+            sample_round,
+            now_ts.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        GLOBAL_STATE.set_snapshot(ticker, snap_obj)
 
     print_minutely_data(ticker, underlying_price, full_df, filtered_df, vol_insights, sample_round)
     return True
 
 
-def refresh_ticker_with_retry(ticker, config, watchlist_tickers=None, force_refresh=True, max_attempts_before_log=3):
+def refresh_ticker_with_retry(ticker, config, max_attempts_before_log=3):
     attempt = 0
     while True:
         attempt += 1
         try:
-            scan_and_cache_ticker(ticker, config, watchlist_tickers=watchlist_tickers, force_refresh=force_refresh)
+            scan_and_cache_ticker(ticker, config)
             return True
         except Exception as exc:
             print(
@@ -1599,6 +820,1131 @@ def refresh_ticker_with_retry(ticker, config, watchlist_tickers=None, force_refr
             time.sleep(RETRY_DELAY_SECONDS)
 
 
+def build_index_page(out_dir: Path, watchlist: list):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    index_html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options Watchlist Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            margin: 0;
+            padding: 24px 32px 60px;
+            background: #f7f8fa;
+            color: #1a1a1a;
+        }
+        .watchlist-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 10px 16px;
+            margin-bottom: 18px;
+        }
+        .watchlist-bar label {
+            font-size: 0.75em;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-weight: 700;
+        }
+        .watchlist-bar input[type="text"],
+        .watchlist-bar select {
+            padding: 6px 10px;
+            border: 1px solid #ccd2da;
+            border-radius: 6px;
+            font-size: 0.9em;
+            background: #fff;
+            color: #111827;
+            text-transform: uppercase;
+        }
+        .watchlist-bar input[type="text"] {
+            width: 210px;
+        }
+        .watchlist-bar select {
+            min-width: 110px;
+        }
+        .view-ticker-btn {
+            padding: 7px 15px;
+            border: 1px solid #2563eb;
+            border-radius: 6px;
+            background: #2563eb;
+            color: white;
+            font-size: 0.88em;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .view-ticker-btn:hover {
+            background: #1d4ed8;
+        }
+        .status-pill {
+            margin-left: auto;
+            font-size: 0.82em;
+            color: #475569;
+        }
+        h1 {
+            font-size: 1.6em;
+            margin-bottom: 4px;
+            margin-top: 0;
+        }
+        h2 {
+            font-size: 1.15em;
+            margin-top: 28px;
+            border-bottom: 2px solid #e2e4e8;
+            padding-bottom: 6px;
+        }
+        .meta {
+            color: #555;
+            font-size: 0.92em;
+            line-height: 1.6;
+        }
+        .warning-banner {
+            display: none;
+            background: #fff4e5;
+            border: 1px solid #f0b429;
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin: 16px 0;
+        }
+        .warning-banner.visible {
+            display: block;
+        }
+        .warning-banner h2 {
+            border: none;
+            margin: 0 0 8px 0;
+            color: #92400e;
+        }
+        .warning-banner ul {
+            margin: 4px 0 0 0;
+            padding-left: 20px;
+        }
+        .stat-row {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin: 10px 0 4px;
+        }
+        .stat-box {
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 10px 16px;
+            min-width: 140px;
+        }
+        .stat-box.highlight {
+            border-color: #2563eb;
+            background: #f0f5ff;
+        }
+        .stat-box.bias-bullish {
+            border-color: #16a34a;
+            background: #f0fdf4;
+        }
+        .stat-box.bias-bullish .value,
+        .stat-box.bias-bullish .sub {
+            color: #15803d;
+        }
+        .stat-box.bias-bearish {
+            border-color: #dc2626;
+            background: #fef2f2;
+        }
+        .stat-box.bias-bearish .value,
+        .stat-box.bias-bearish .sub {
+            color: #b91c1c;
+        }
+        .stat-box.bias-neutral {
+            border-color: #64748b;
+            background: #f8fafc;
+        }
+        .stat-box.bias-neutral .value,
+        .stat-box.bias-neutral .sub {
+            color: #475569;
+        }
+        .stat-box .label {
+            font-size: 0.72em;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            font-weight: 600;
+        }
+        .stat-box .value {
+            font-size: 1.25em;
+            font-weight: 700;
+            color: #111827;
+            margin-top: 2px;
+        }
+        .stat-box .sub {
+            font-size: 0.75em;
+            color: #2563eb;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+        .bias-note {
+            font-size: 0.88em;
+            color: #374151;
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-top: 10px;
+            line-height: 1.5;
+        }
+        .story-banner {
+            font-size: 0.88em;
+            color: #1e293b;
+            background: #f8fafc;
+            border-left: 4px solid #2563eb;
+            border-top: 1px solid #e2e4e8;
+            border-right: 1px solid #e2e4e8;
+            border-bottom: 1px solid #e2e4e8;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin: 10px 0 8px;
+            line-height: 1.5;
+        }
+        .chart-box {
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 8px;
+            margin: 14px 0;
+            overflow-x: auto;
+        }
+        table.data-table {
+            border-collapse: collapse;
+            width: 100%;
+            background: white;
+            font-size: 0.85em;
+        }
+        table.data-table th,
+        table.data-table td {
+            border: 1px solid #e2e4e8;
+            padding: 6px 10px;
+            text-align: right;
+            white-space: nowrap;
+        }
+        table.data-table th:first-child,
+        table.data-table td:first-child {
+            text-align: left;
+        }
+        table.data-table th {
+            background: #eef1f5;
+            cursor: pointer;
+            user-select: none;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        table.data-table th:hover {
+            background: #dfe4ea;
+        }
+        table.data-table tbody tr:nth-child(even) {
+            background: #fafbfc;
+        }
+        table.data-table tbody tr.flagged-row {
+            background: #fdecea;
+            color: #9a3412;
+        }
+        table.data-table tbody tr:hover {
+            background: #dbeafe !important;
+        }
+        .note {
+            color: #666;
+            font-size: 0.88em;
+            font-style: italic;
+            margin: 4px 0 10px;
+        }
+        .table-wrap {
+            max-height: 600px;
+            overflow: auto;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+        }
+        .filter-bar {
+            display: flex;
+            gap: 18px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 10px 0 14px;
+        }
+        .filter-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .filter-field label {
+            font-size: 0.72em;
+            color: #777;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .filter-field select,
+        .filter-field input[type="number"] {
+            padding: 5px 8px;
+            border: 1px solid #ccd2da;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        .filter-field input[type="number"] {
+            width: 75px;
+        }
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-field input[type="range"] {
+            accent-color: #2563eb;
+            cursor: pointer;
+            width: 110px;
+        }
+        .filter-reset {
+            padding: 6px 14px;
+            border: 1px solid #ccd2da;
+            border-radius: 6px;
+            background: #f1f3f6;
+            cursor: pointer;
+            font-size: 0.85em;
+            height: 30px;
+        }
+        .filter-reset:hover {
+            background: #e2e6eb;
+        }
+        .filter-count {
+            font-size: 0.85em;
+            color: #555;
+            margin-left: auto;
+            align-self: center;
+        }
+        .notice-bar {
+            display: none;
+            background: #fff4e5;
+            border: 1px solid #f0b429;
+            color: #92400e;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin: 12px 0;
+            font-size: 0.9em;
+        }
+        .notice-bar.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="watchlist-bar">
+        <label for="watchlist-input" id="watchlist-label">WATCHLIST TICKER:</label>
+        <input
+            type="text"
+            id="watchlist-input"
+            list="watchlist-tickers"
+            placeholder="Type ticker (e.g. XLE)"
+            autocomplete="off"
+            oninput="syncWatchlistFromInput()"
+            onkeydown="if (event.key === 'Enter') { event.preventDefault(); applySelectedTicker(); }"
+        >
+        <datalist id="watchlist-tickers"></datalist>
+        <select id="watchlist-select" onchange="syncWatchlistFromSelect()" aria-label="Select watchlist ticker"></select>
+        <button type="button" class="view-ticker-btn" onclick="applySelectedTicker()">View Ticker</button>
+        <span class="status-pill" id="batch-status">Loading latest snapshots...</span>
+    </div>
+
+    <div class="header-row">
+        <div>
+            <h1 id="dashboard-title">Options Scanner Dashboard</h1>
+            <div class="meta" id="dashboard-meta">Loading latest background snapshot...</div>
+        </div>
+    </div>
+
+    <div id="ticker-notice" class="notice-bar"></div>
+
+    <div id="warning-banner" class="warning-banner">
+        <h2>Data Quality Warnings</h2>
+        <ul id="warning-list"></ul>
+    </div>
+
+    <h2>Volatility, Map Bias &amp; Pricing Overview</h2>
+    <div class="stat-row">
+        <div class="stat-box bias-neutral" id="bias-box">
+            <div class="label">Underlying Bias (Maps)</div>
+            <div class="value" id="stat-bias">-</div>
+            <div class="sub" id="stat-bias-score">Score: -</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">30D Realized HV</div>
+            <div class="value" id="stat-hv">-</div>
+            <div class="sub">Past Movement</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">ATM Implied Vol (IV)</div>
+            <div class="value" id="stat-iv">-</div>
+            <div class="sub">Market Expectation</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">IV / HV Ratio</div>
+            <div class="value" id="stat-ratio">-</div>
+            <div class="sub" id="stat-pricing-bias">-</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">HV Rank (1Y)</div>
+            <div class="value" id="stat-hv-rank">-</div>
+            <div class="sub">Range Relative</div>
+        </div>
+    </div>
+    <div class="bias-note" id="bias-note"><strong>Latest Map Interpretation:</strong> Waiting for snapshot data...</div>
+
+    <div class="stat-row" style="margin-top: 12px;">
+        <div class="stat-box"><div class="label">Total Chain Contracts</div><div class="value" id="stat-total-contracts">0</div></div>
+        <div class="stat-box"><div class="label">Matching Filter</div><div class="value" id="stat-matching-count">0</div></div>
+        <div class="stat-box"><div class="label">Calls</div><div class="value" id="stat-calls">0</div></div>
+        <div class="stat-box"><div class="label">Puts</div><div class="value" id="stat-puts">0</div></div>
+    </div>
+
+    <h2>Order Flow Story &amp; Market Interpretation Trend</h2>
+    <div class="story-banner" id="story-banner"><strong>Order Flow Story:</strong> Waiting for persisted history...</div>
+    <div class="chart-box">
+        <div id="chart-story" style="width: 100%; height: 760px;"></div>
+    </div>
+
+    <h2>Liquidity Map &amp; Implied Volatility by Expiration</h2>
+    <div class="chart-box">
+        <div id="chart-liquidity" style="width: 100%; height: 420px;"></div>
+    </div>
+    <div class="chart-box">
+        <div id="chart-iv" style="width: 100%; height: 420px;"></div>
+    </div>
+
+    <h2>Filtered Option Contracts</h2>
+    <div class="filter-bar">
+        <div class="filter-field">
+            <label for="filter-type">Type</label>
+            <select id="filter-type" onchange="saveFilterState(); filterTable()">
+                <option value="ALL">All</option>
+                <option value="Call">Call</option>
+                <option value="Put">Put</option>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="filter-dte-num">Min DTE</label>
+            <div class="slider-group">
+                <input type="range" id="filter-dte-slider" min="0" max="365" value="0">
+                <input type="number" id="filter-dte-num" min="0" max="365" value="0">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-max-dte-num">Max DTE</label>
+            <div class="slider-group">
+                <input type="range" id="filter-max-dte-slider" min="0" max="365" value="365">
+                <input type="number" id="filter-max-dte-num" min="0" max="365" value="365">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-price-num">Max Option Price ($)</label>
+            <div class="slider-group">
+                <input type="range" id="filter-price-slider" min="0" max="1000" value="999">
+                <input type="number" id="filter-price-num" min="0" max="1000" value="999">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-vol-num">Min Volume</label>
+            <div class="slider-group">
+                <input type="range" id="filter-vol-slider" min="0" max="5000" value="0">
+                <input type="number" id="filter-vol-num" min="0" max="100000" value="0">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-spread-num">Max Avg Spread %</label>
+            <div class="slider-group">
+                <input type="range" id="filter-spread-slider" min="0" max="100" value="100">
+                <input type="number" id="filter-spread-num" min="0" max="100" value="100">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-oi-num">Min OI</label>
+            <div class="slider-group">
+                <input type="range" id="filter-oi-slider" min="0" max="5000" value="0">
+                <input type="number" id="filter-oi-num" min="0" max="100000" value="0">
+            </div>
+        </div>
+        <button type="button" class="filter-reset" onclick="resetFilters()">Reset Filters</button>
+        <div class="filter-count" id="filter-count">0 matching contracts</div>
+    </div>
+
+    <div class="note">Click any table header to sort. Avg Spread% averages valid spread% samples across snapshots (hover cell for sample count). Rows with data-quality issues are highlighted in red.</div>
+    <div class="table-wrap">
+        <table class="data-table" id="scan-results-table" data-sort-col="" data-sort-dir="">
+            <thead>
+                <tr>
+                    <th onclick="sortTable('scan-results-table', 0)">Type</th>
+                    <th onclick="sortTable('scan-results-table', 1)">Exp</th>
+                    <th onclick="sortTable('scan-results-table', 2)">DTE</th>
+                    <th onclick="sortTable('scan-results-table', 3)">Strike</th>
+                    <th onclick="sortTable('scan-results-table', 4)">Moneyness%</th>
+                    <th onclick="sortTable('scan-results-table', 5)">Last</th>
+                    <th onclick="sortTable('scan-results-table', 6)">Bid</th>
+                    <th onclick="sortTable('scan-results-table', 7)">Ask</th>
+                    <th onclick="sortTable('scan-results-table', 8)">Mid</th>
+                    <th onclick="sortTable('scan-results-table', 9)">Avg Spread%</th>
+                    <th onclick="sortTable('scan-results-table', 10)">Vol</th>
+                    <th onclick="sortTable('scan-results-table', 11)">OI</th>
+                    <th onclick="sortTable('scan-results-table', 12)">Vol/OI</th>
+                    <th onclick="sortTable('scan-results-table', 13)">IV</th>
+                    <th onclick="sortTable('scan-results-table', 14)">Delta</th>
+                    <th onclick="sortTable('scan-results-table', 15)">Theta</th>
+                    <th onclick="sortTable('scan-results-table', 16)">NoBid</th>
+                    <th onclick="sortTable('scan-results-table', 17)">Stale</th>
+                </tr>
+            </thead>
+            <tbody id="contracts-tbody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        let SNAPSHOT_PAYLOAD = { updated_at: null, watchlist: [], tickers: {} };
+        let STATE_PAYLOAD = { saved_at: null, sample_rounds: {}, market_history: {}, spread_history: {} };
+        let ACTIVE_TICKER = null;
+
+        function getWatchlist() {
+            const fromSnap = Array.isArray(SNAPSHOT_PAYLOAD.watchlist) ? SNAPSHOT_PAYLOAD.watchlist : [];
+            const fromKeys = Object.keys(SNAPSHOT_PAYLOAD.tickers || {});
+            const merged = [];
+            const seen = new Set();
+            for (const t of [...fromSnap, ...fromKeys]) {
+                const up = String(t || "").trim().toUpperCase();
+                if (up && !seen.has(up)) {
+                    merged.push(up);
+                    seen.add(up);
+                }
+            }
+            return merged;
+        }
+
+        function populateWatchlistControls(selectedTicker) {
+            const wl = getWatchlist();
+            const lbl = document.getElementById("watchlist-label");
+            if (lbl) {
+                lbl.textContent = `WATCHLIST TICKER (${wl.length}):`;
+            }
+            const datalist = document.getElementById("watchlist-tickers");
+            if (datalist) {
+                datalist.innerHTML = wl.map(t => `<option value="${t}"></option>`).join("");
+            }
+            const select = document.getElementById("watchlist-select");
+            if (select) {
+                select.innerHTML = wl.map(
+                    t => `<option value="${t}"${t === selectedTicker ? " selected" : ""}>${t}</option>`
+                ).join("");
+            }
+            const input = document.getElementById("watchlist-input");
+            if (input && selectedTicker) {
+                input.value = selectedTicker;
+            }
+        }
+
+        function syncWatchlistFromInput() {
+            const input = document.getElementById("watchlist-input");
+            const select = document.getElementById("watchlist-select");
+            if (!input || !select) return;
+            const val = input.value.trim().toUpperCase();
+            const match = Array.from(select.options).find(o => o.value === val);
+            if (match) {
+                select.value = val;
+            }
+        }
+
+        function syncWatchlistFromSelect() {
+            const input = document.getElementById("watchlist-input");
+            const select = document.getElementById("watchlist-select");
+            if (!input || !select) return;
+            input.value = select.value;
+            applySelectedTicker();
+        }
+
+        function applySelectedTicker() {
+            const input = document.getElementById("watchlist-input");
+            const select = document.getElementById("watchlist-select");
+            const raw = (input && input.value.trim()) ? input.value.trim() : (select ? select.value : "");
+            const clean = raw.toUpperCase().replace(/[^A-Z0-9.\-]/g, "");
+            if (!clean) return;
+            renderTickerView(clean);
+        }
+
+        function escapeHtml(str) {
+            return String(str ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+        }
+
+        function fmtNum(v, pct = false, dec = 2) {
+            if (v === null || v === undefined || Number.isNaN(Number(v))) return "-";
+            const n = Number(v);
+            if (!Number.isFinite(n)) return "-";
+            return pct ? `${n.toFixed(dec)}%` : n.toFixed(dec);
+        }
+
+        function summarizeNarrative(history) {
+            if (!history || history.length === 0) {
+                return "Awaiting snapshots to build the order-flow narrative.";
+            }
+            const first = history[0];
+            const latest = history[history.length - 1];
+            const n = history.length;
+
+            if (n === 1) {
+                const volTxt = (latest.call_vol_share !== null && latest.call_vol_share !== undefined)
+                    ? `Call volume share is ${Number(latest.call_vol_share).toFixed(1)}%`
+                    : "Call/put volume share is balanced";
+                const skewTxt = (latest.skew_diff_pct !== null && latest.skew_diff_pct !== undefined)
+                    ? `Put-Call IV skew stands at ${Number(latest.skew_diff_pct) >= 0 ? "+" : ""}${Number(latest.skew_diff_pct).toFixed(2)}%`
+                    : "IV skew is flat";
+                return `Initial snapshot (#${latest.round} at ${latest.timestamp}): Bias is <strong>${escapeHtml(latest.bias)}</strong> (score ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)}; yellow neutral zone is -0.35 to +0.35). ${volTxt}; ${skewTxt}. Additional scheduled background runs will chart directional momentum.`;
+            }
+
+            const delta = Number(latest.score) - Number(first.score);
+            let trend = `held steady (${Number(first.score) >= 0 ? "+" : ""}${Number(first.score).toFixed(2)} &rarr; ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)})`;
+            if (delta >= 0.15) {
+                trend = `strengthened bullishly (${Number(first.score) >= 0 ? "+" : ""}${Number(first.score).toFixed(2)} &rarr; ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)})`;
+            } else if (delta <= -0.15) {
+                trend = `shifted bearishly (${Number(first.score) >= 0 ? "+" : ""}${Number(first.score).toFixed(2)} &rarr; ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)})`;
+            }
+
+            const flips = [];
+            for (let i = 1; i < n; i++) {
+                if (history[i].bias !== history[i - 1].bias) {
+                    flips.push(`${history[i - 1].bias}&rarr;${history[i].bias} @ ${history[i].timestamp}`);
+                }
+            }
+            const flipTxt = flips.length > 0
+                ? ` Regime shifts: ${flips.join(", ")}.`
+                : ` Regime remained <strong>${escapeHtml(latest.bias)}</strong> across all ${n} samples.`;
+
+            let volTxt = "";
+            if (first.call_vol_share !== null && latest.call_vol_share !== null) {
+                const dv = Number(latest.call_vol_share) - Number(first.call_vol_share);
+                volTxt = ` Call volume flow moved ${Number(first.call_vol_share).toFixed(1)}% &rarr; ${Number(latest.call_vol_share).toFixed(1)}% (${dv >= 0 ? "+" : ""}${dv.toFixed(1)}%).`;
+            }
+
+            let spotTxt = "";
+            if (first.spot && latest.spot && Number(first.spot) > 0) {
+                const dpPct = ((Number(latest.spot) - Number(first.spot)) / Number(first.spot)) * 100.0;
+                spotTxt = ` Underlying moved $${Number(first.spot).toFixed(2)} &rarr; $${Number(latest.spot).toFixed(2)} (${dpPct >= 0 ? "+" : ""}${dpPct.toFixed(2)}%).`;
+            }
+
+            return `Across <strong>${n}</strong> snapshots (${first.timestamp} &ndash; ${latest.timestamp}), composite order-flow bias ${trend}.${flipTxt}${volTxt}${spotTxt}`;
+        }
+
+        function computeDeltas(values) {
+            const base = values.find(v => v !== null && v !== undefined && Number.isFinite(Number(v)));
+            if (base === undefined) return values.map(() => null);
+            return values.map(v => {
+                if (v === null || v === undefined || !Number.isFinite(Number(v))) return null;
+                return +(Number(v) - Number(base)).toFixed(2);
+            });
+        }
+
+        function symmetricRange(seriesList, minSpan = 5.0, padRatio = 0.30) {
+            let peak = 0;
+            for (const s of seriesList) {
+                for (const v of s) {
+                    if (v !== null && v !== undefined && Number.isFinite(Number(v))) {
+                        peak = Math.max(peak, Math.abs(Number(v)));
+                    }
+                }
+            }
+            const bound = Math.max(minSpan, +(peak * (1.0 + padRatio)).toFixed(2));
+            return [-bound, bound];
+        }
+
+        function renderTickerCharts(ticker, snap, history) {
+            const storyEl = document.getElementById("chart-story");
+            const liqEl = document.getElementById("chart-liquidity");
+            const ivEl = document.getElementById("chart-iv");
+
+            if (!history || history.length === 0) {
+                Plotly.purge(storyEl);
+                storyEl.innerHTML = "<p style='padding:12px;'>No market interpretation history recorded yet.</p>";
+            } else {
+                const times = history.map(h => h.timestamp);
+                const rounds = history.map(h => h.round);
+                const scores = history.map(h => h.score);
+                const biases = history.map(h => h.bias);
+                const summaries = history.map(h => h.summary || "");
+                const spots = history.map(h => h.spot);
+                const callVols = history.map(h => h.call_vol_share);
+                const callOis = history.map(h => h.call_oi_share);
+                const dCallVols = computeDeltas(callVols);
+                const dCallOis = computeDeltas(callOis);
+                const skews = history.map(h => h.skew_diff_pct);
+                const slopes = history.map(h => h.iv_slope_pct);
+                const atmIvs = history.map(h => h.atm_iv);
+
+                const markerColors = biases.map(b => b === "Bullish" ? "#16a34a" : (b === "Bearish" ? "#dc2626" : "#ca8a04"));
+                const hoverStory = rounds.map((r, i) =>
+                    `<b>Sample #${r} (${times[i]})</b><br>Regime: <b>${biases[i]}</b> (Score: ${scores[i] >= 0 ? "+" : ""}${Number(scores[i]).toFixed(2)})<br>Drivers: ${escapeHtml(summaries[i])}`
+                );
+
+                const traces = [
+                    {
+                        x: times, y: scores, name: "Bias Score", mode: "lines+markers",
+                        line: { color: "#1d4ed8", width: 2.5 },
+                        marker: { size: 9, color: markerColors, line: { width: 1.5, color: "white" } },
+                        text: hoverStory, hovertemplate: "%{text}<extra></extra>", xaxis: "x", yaxis: "y"
+                    },
+                    {
+                        x: times, y: spots, name: "Spot Price ($)", mode: "lines+markers",
+                        line: { color: "#f59e0b", width: 2, dash: "dash" },
+                        marker: { size: 6, color: "#f59e0b" },
+                        hovertemplate: "Spot: $%{y:.2f}<extra></extra>", xaxis: "x", yaxis: "y2"
+                    },
+                    {
+                        x: times, y: dCallVols, name: "Δ Call Vol Share (pts)", mode: "lines+markers",
+                        line: { color: "#0d9488", width: 2.4 },
+                        marker: { size: 8, color: "#0d9488", line: { width: 1.2, color: "white" } },
+                        text: dCallVols.map((dv, i) => dv !== null && callVols[i] !== null ? `Δ Call Vol: ${dv >= 0 ? "+" : ""}${dv.toFixed(2)} pts (Share: ${Number(callVols[i]).toFixed(1)}%)` : "Δ Call Vol: N/A"),
+                        hovertemplate: "%{text}<extra></extra>", xaxis: "x", yaxis: "y3"
+                    },
+                    {
+                        x: times, y: dCallOis, name: "Δ Call OI Share (pts)", mode: "lines+markers",
+                        line: { color: "#6366f1", width: 2.2, dash: "dash" },
+                        marker: { size: 7, color: "#6366f1", line: { width: 1.2, color: "white" } },
+                        text: dCallOis.map((doVal, i) => doVal !== null && callOis[i] !== null ? `Δ Call OI: ${doVal >= 0 ? "+" : ""}${doVal.toFixed(2)} pts (Share: ${Number(callOis[i]).toFixed(1)}%)` : "Δ Call OI: N/A"),
+                        hovertemplate: "%{text}<extra></extra>", xaxis: "x", yaxis: "y3"
+                    },
+                    {
+                        x: times, y: skews, name: "Put-Call IV Skew %", mode: "lines+markers",
+                        line: { color: "#e11d48", width: 2 }, marker: { size: 6 },
+                        hovertemplate: "Put-Call Skew: %{y:+.2f}%<extra></extra>", xaxis: "x", yaxis: "y4"
+                    },
+                    {
+                        x: times, y: slopes, name: "IV Term Slope %", mode: "lines+markers",
+                        line: { color: "#8b5cf6", width: 1.8, dash: "dash" }, marker: { size: 6 },
+                        hovertemplate: "IV Term Slope: %{y:+.2f}%<extra></extra>", xaxis: "x", yaxis: "y4"
+                    },
+                    {
+                        x: times, y: atmIvs, name: "ATM IV %", mode: "lines+markers",
+                        line: { color: "#0284c7", width: 2 }, marker: { size: 6 },
+                        hovertemplate: "ATM IV: %{y:.2f}%<extra></extra>", xaxis: "x", yaxis: "y5"
+                    }
+                ];
+
+                const flowRange = symmetricRange([dCallVols, dCallOis], 5.0, 0.30);
+                const layout = {
+                    template: "plotly_white",
+                    height: 760,
+                    hovermode: "x unified",
+                    legend: { orientation: "h", yanchor: "bottom", y: 1.03, xanchor: "left", x: 0 },
+                    margin: { l: 60, r: 60, t: 75, b: 50 },
+                    xaxis: { title: "Sample Timestamp", anchor: "y4", showgrid: true },
+                    yaxis:  { title: "Bias Score", range: [-2.4, 2.4], domain: [0.64, 1.0] },
+                    yaxis2: { title: "Spot ($)", overlaying: "y", side: "right", showgrid: false },
+                    yaxis3: { title: "Δ Flow (pts)", range: flowRange, zeroline: false, domain: [0.33, 0.57] },
+                    yaxis4: { title: "Skew / Slope %", domain: [0.0, 0.25] },
+                    yaxis5: { title: "ATM IV %", overlaying: "y4", side: "right", showgrid: false },
+                    shapes: [
+                        { type: "rect", xref: "paper", yref: "y", x0: 0, x1: 1, y0: 0.35, y1: 2.4, fillcolor: "rgba(22, 163, 74, 0.07)", line: { width: 0 }, layer: "below" },
+                        { type: "rect", xref: "paper", yref: "y", x0: 0, x1: 1, y0: -0.35, y1: 0.35, fillcolor: "rgba(250, 204, 21, 0.28)", line: { width: 0 }, layer: "below" },
+                        { type: "rect", xref: "paper", yref: "y", x0: 0, x1: 1, y0: -2.4, y1: -0.35, fillcolor: "rgba(220, 38, 38, 0.07)", line: { width: 0 }, layer: "below" },
+                        { type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: 0.35, y1: 0.35, line: { color: "#eab308", width: 1.2, dash: "dash" } },
+                        { type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: -0.35, y1: -0.35, line: { color: "#eab308", width: 1.2, dash: "dash" } },
+                        { type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: 0.0, y1: 0.0, line: { color: "#94a3b8", width: 1, dash: "dot" } },
+                        { type: "line", xref: "paper", yref: "y3", x0: 0, x1: 1, y0: 0.0, y1: 0.0, line: { color: "#64748b", width: 1.2, dash: "dot" } },
+                        { type: "line", xref: "paper", yref: "y4", x0: 0, x1: 1, y0: 0.0, y1: 0.0, line: { color: "#94a3b8", width: 1, dash: "dot" } }
+                    ],
+                    annotations: [
+                        { text: `${ticker} Composite Order-Flow Bias Score vs. Spot Price (Yellow Strip = -0.35 to +0.35)`, xref: "paper", yref: "paper", x: 0.5, y: 1.025, showarrow: false, font: { size: 13, color: "#1a1a1a" } },
+                        { text: "Liquidity-Weighted Order Flow Shift (Δ vs. First Sample — High Sensitivity)", xref: "paper", yref: "paper", x: 0.5, y: 0.595, showarrow: false, font: { size: 13, color: "#1a1a1a" } },
+                        { text: "Volatility Structure (Put-Call IV Skew %, Term Slope % & ATM IV %)", xref: "paper", yref: "paper", x: 0.5, y: 0.275, showarrow: false, font: { size: 13, color: "#1a1a1a" } }
+                    ]
+                };
+                Plotly.newPlot(storyEl, traces, layout, { responsive: true });
+            }
+
+            const contracts = (snap && Array.isArray(snap.contracts)) ? snap.contracts : [];
+            if (contracts.length === 0) {
+                Plotly.purge(liqEl);
+                liqEl.innerHTML = "<p style='padding:12px;'>No contract data available for liquidity map.</p>";
+                Plotly.purge(ivEl);
+                ivEl.innerHTML = "<p style='padding:12px;'>No reliable IV data available for smile chart.</p>";
+                return;
+            }
+
+            const liqTraces = ["Call", "Put"].map(optType => {
+                const sub = contracts.filter(c => c.type === optType);
+                return {
+                    x: sub.map(c => Number(c.vol || 0)),
+                    y: sub.map(c => c.avgSpread !== null && c.avgSpread !== undefined ? Number(c.avgSpread) : 100.0),
+                    name: optType,
+                    mode: "markers",
+                    marker: {
+                        size: sub.map(c => Math.max(8, Math.sqrt(Math.max(1, Number(c.oi || 1))) * 0.14)),
+                        color: optType === "Call" ? "#2563eb" : "#ef4444",
+                        opacity: 0.72,
+                        line: { width: 1, color: "white" }
+                    },
+                    text: sub.map(c => `${optType} $${fmtNum(c.strike)} (${c.exp}, ${c.dte}d)<br>Vol: ${Number(c.vol || 0).toLocaleString()} | OI: ${Number(c.oi || 0).toLocaleString()}<br>Avg Spread: ${fmtNum(c.avgSpread, true)} | Last: $${fmtNum(c.last)}`),
+                    hovertemplate: "%{text}<extra></extra>"
+                };
+            });
+
+            Plotly.newPlot(liqEl, liqTraces, {
+                template: "plotly_white",
+                height: 420,
+                title: { text: `${ticker} Liquidity Map (Volume vs Avg Spread %)`, font: { size: 15 } },
+                xaxis: { title: "Volume" },
+                yaxis: { title: "Avg Spread %" },
+                legend: { title: { text: "Option Type" } },
+                margin: { l: 60, r: 30, t: 55, b: 50 }
+            }, { responsive: true });
+
+            const validIv = contracts.filter(c => !c.noBid && !c.arb && c.iv !== null && c.iv !== undefined && Number(c.iv) > 0);
+            if (validIv.length === 0) {
+                Plotly.purge(ivEl);
+                ivEl.innerHTML = "<p style='padding:12px;'>No reliable IV data available for smile chart.</p>";
+                return;
+            }
+
+            const exps = Array.from(new Set(validIv.map(c => c.exp))).sort();
+            const palette = ["#2563eb", "#16a34a", "#f59e0b", "#8b5cf6", "#0d9488", "#e11d48", "#6366f1", "#ca8a04"];
+            const ivTraces = [];
+            exps.forEach((exp, idx) => {
+                ["Call", "Put"].forEach(optType => {
+                    const sub = validIv
+                        .filter(c => c.exp === exp && c.type === optType)
+                        .sort((a, b) => Number(a.strike) - Number(b.strike));
+                    if (sub.length > 0) {
+                        ivTraces.push({
+                            x: sub.map(c => Number(c.strike)),
+                            y: sub.map(c => +(Number(c.iv) / 100.0).toFixed(4)),
+                            name: `${exp} (${optType})`,
+                            mode: "lines+markers",
+                            line: { color: palette[idx % palette.length], width: 2, dash: optType === "Put" ? "dash" : "solid" },
+                            marker: { size: 6 },
+                            hovertemplate: `${exp} ${optType}<br>Strike: $%{x}<br>IV: %{y:.2%}<extra></extra>`
+                        });
+                    }
+                });
+            });
+
+            Plotly.newPlot(ivEl, ivTraces, {
+                template: "plotly_white",
+                height: 420,
+                title: { text: `${ticker} Implied Volatility Smile by Expiration`, font: { size: 15 } },
+                xaxis: { title: "Strike Price" },
+                yaxis: { title: "Implied Volatility", tickformat: ".1%" },
+                margin: { l: 65, r: 30, t: 55, b: 50 }
+            }, { responsive: true });
+        }
+
+        function renderTickerView(ticker) {
+            ACTIVE_TICKER = ticker;
+            populateWatchlistControls(ticker);
+
+            const snap = (SNAPSHOT_PAYLOAD.tickers || {})[ticker];
+            const history = (STATE_PAYLOAD.market_history || {})[ticker] || [];
+            const noticeEl = document.getElementById("ticker-notice");
+            const warnBanner = document.getElementById("warning-banner");
+            const warnList = document.getElementById("warning-list");
+
+            if (!snap) {
+                if (noticeEl) {
+                    noticeEl.textContent = `No snapshot found yet for ${ticker}. It may not be in the 50-ticker background watchlist or hasn't finished its first scan.`;
+                    noticeEl.classList.add("visible");
+                }
+                document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
+                document.getElementById("dashboard-meta").textContent = "Awaiting snapshot for this symbol.";
+                document.getElementById("contracts-tbody").innerHTML = "";
+                document.getElementById("filter-count").textContent = "0 matching contracts";
+                document.getElementById("stat-matching-count").textContent = "0";
+                renderTickerCharts(ticker, null, []);
+                return;
+            }
+
+            if (noticeEl) {
+                noticeEl.classList.remove("visible");
+                noticeEl.textContent = "";
+            }
+
+            const spotStr = (snap.spot !== null && snap.spot !== undefined) ? `$${Number(snap.spot).toFixed(2)}` : "N/A";
+            const rounds = snap.sample_rounds || history.length || 1;
+            document.title = `${ticker} Options Scan Dashboard`;
+            document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
+            document.getElementById("dashboard-meta").innerHTML =
+                `Underlying Price: <strong>${spotStr}</strong> | Latest Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> | Spread Samples: <strong>${rounds}</strong> (every ${SPREAD_SAMPLE_INTERVAL_SECONDS = 60}s)`;
+
+            const warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
+            if (warnings.length > 0 && warnBanner && warnList) {
+                warnList.innerHTML = warnings.map(w => `<li>${escapeHtml(w)}</li>`).join("");
+                warnBanner.classList.add("visible");
+            } else if (warnBanner) {
+                warnBanner.classList.remove("visible");
+            }
+
+            const ins = snap.insights || {};
+            const bias = ins.map_bias || "Neutral";
+            const score = Number(ins.map_bias_score || 0);
+            const biasBox = document.getElementById("bias-box");
+            if (biasBox) {
+                biasBox.className = "stat-box " + (bias === "Bullish" ? "bias-bullish" : (bias === "Bearish" ? "bias-bearish" : "bias-neutral"));
+            }
+            document.getElementById("stat-bias").textContent = bias;
+            document.getElementById("stat-bias-score").textContent = `Score: ${score >= 0 ? "+" : ""}${score.toFixed(2)}`;
+            document.getElementById("stat-hv").textContent = ins.current_30d_hv !== null && ins.current_30d_hv !== undefined ? `${Number(ins.current_30d_hv).toFixed(1)}%` : "-";
+            document.getElementById("stat-iv").textContent = ins.atm_iv !== null && ins.atm_iv !== undefined ? `${Number(ins.atm_iv).toFixed(1)}%` : "-";
+            document.getElementById("stat-ratio").textContent = ins.iv_hv_ratio !== null && ins.iv_hv_ratio !== undefined ? Number(ins.iv_hv_ratio).toFixed(2) : "-";
+            document.getElementById("stat-pricing-bias").textContent = ins.pricing_bias || "N/A";
+            document.getElementById("stat-hv-rank").textContent = ins.hv_rank !== null && ins.hv_rank !== undefined ? `${Number(ins.hv_rank).toFixed(1)}%` : "-";
+            document.getElementById("bias-note").innerHTML = `<strong>Latest Map Interpretation (${escapeHtml(bias)}):</strong> ${escapeHtml(ins.map_bias_summary || "")}`;
+
+            const counts = snap.counts || {};
+            document.getElementById("stat-total-contracts").textContent = counts.total ?? 0;
+            document.getElementById("stat-calls").textContent = counts.calls ?? 0;
+            document.getElementById("stat-puts").textContent = counts.puts ?? 0;
+
+            document.getElementById("story-banner").innerHTML = `<strong>Order Flow Story:</strong> ${summarizeNarrative(history)}`;
+
+            const contracts = Array.isArray(snap.contracts) ? snap.contracts : [];
+            const tbody = document.getElementById("contracts-tbody");
+            tbody.innerHTML = contracts.map(r => {
+                const isFlagged = Boolean(r.noBid || r.stale || r.arb);
+                const rowCls = isFlagged ? ' class="flagged-row"' : "";
+                const spreadTitle = `Averaged across ${r.samples || 0} sample(s)`;
+                return `<tr${rowCls}>
+                    <td>${escapeHtml(r.type || "-")}</td>
+                    <td>${escapeHtml(r.exp || "-")}</td>
+                    <td>${r.dte ?? 0}</td>
+                    <td>${fmtNum(r.strike)}</td>
+                    <td>${fmtNum(r.moneyness, true)}</td>
+                    <td>${fmtNum(r.last)}</td>
+                    <td>${fmtNum(r.bid)}</td>
+                    <td>${fmtNum(r.ask)}</td>
+                    <td>${fmtNum(r.mid)}</td>
+                    <td title="${escapeHtml(spreadTitle)}">${fmtNum(r.avgSpread, true)}</td>
+                    <td>${r.vol ?? 0}</td>
+                    <td>${r.oi ?? 0}</td>
+                    <td>${fmtNum(r.volOi)}</td>
+                    <td>${fmtNum(r.iv, true)}</td>
+                    <td>${fmtNum(r.delta, false, 3)}</td>
+                    <td>${fmtNum(r.theta, false, 3)}</td>
+                    <td>${r.noBid ? "YES" : "No"}</td>
+                    <td>${r.stale ? "YES" : "No"}</td>
+                </tr>`;
+            }).join("");
+
+            loadFilterState();
+            filterTable();
+            renderTickerCharts(ticker, snap, history);
+        }
+
+        function sortTable(tableId, colIdx) {
+            const table = document.getElementById(tableId);
+            const tbody = table.tBodies[0];
+            const rows = Array.from(tbody.rows);
+            const asc = table.dataset.sortCol == colIdx ? table.dataset.sortDir !== "asc" : true;
+            rows.sort((a, b) => {
+                const xText = a.cells[colIdx].innerText.trim();
+                const yText = b.cells[colIdx].innerText.trim();
+                const xNum = parseFloat(xText.replace(/[^0-9.\-]/g, ""));
+                const yNum = parseFloat(yText.replace(/[^0-9.\-]/g, ""));
+                const bothNumeric = !isNaN(xNum) && !isNaN(yNum) && xText.match(/^-?[\d.,]+%?$/) && yText.match(/^-?[\d.,]+%?$/);
+                if (bothNumeric) {
+                    return asc ? xNum - yNum : yNum - xNum;
+                }
+                return asc ? xText.localeCompare(yText) : yText.localeCompare(xText);
+            });
+            table.dataset.sortCol = colIdx;
+            table.dataset.sortDir = asc ? "asc" : "desc";
+            rows.forEach(r => tbody.appendChild(r));
+        }
+
+        function getTickerStorageKey() {
+            const t = (ACTIVE_TICKER || document.getElementById("watchlist-input")?.value || "DEFAULT").toUpperCase();
+            return "options_filter_state_" + t;
+        }
+
+        function saveFilterState() {
+            const state = {
+                type: document.getElementById("filter-type").value,
+                dte: document.getElementById("filter-dte-num").value,
+                maxDte: document.getElementById("filter-max-dte-num").value,
+                price: document.getElementById("filter-price-num").value,
+                vol: document.getElementById("filter-vol-num").value,
+                spread: document.getElementById("filter-spread-num").value,
+                oi: document.getElementById("filter-oi-num").value
+            };
+            try {
+                localStorage.setItem(getTickerStorageKey(), JSON.stringify(state));
+            } catch (e) {}
+        }
+
+        function loadFilterState() {
+            let saved = null;
+            try {
+                saved = localStorage.getItem(getTickerStorageKey());
+            } catch (e) {}
+            if (!saved) return;
+            try {
+                const state = JSON.parse(saved);
+                if (state.type !== undefined) document.getElementById("filter-type").value = state.type;
+                const pairs = [
+                    ["filter-dte-slider", "filter-dte-num", state.dte],
+                    ["filter-max-dte-slider", "filter-max-dte-num", state.maxDte],
+                    ["filter-price-slider", "filter-price-num", state.price],
+                    ["filter-vol-slider", "filter-vol-num", state.vol],
+                    ["filter-spread-slider", "filter-spread-num", state.spread],
+                    ["filter-oi-slider", "filter-oi-num", state.oi]
+                ];
+                pairs.forEach(([sId, nId, val]) => {
+                    if (val !== undefined && val !== "") {
+                        const slider = document.getElementById(sId);
+                        const num = document.getElementById(nId);
+                        if (slider) slider.value = val;
+                        if (num) num.value = val;
+                    }
+                });
+            } catch (e) {}
+        }
+
+        function syncInputs(sliderId, numId) {
+            const slider = document.getElementById(sliderId);
+            const num = document.getElementById(numId);
+            if (!slider || !num) return;
+            slider.addEventListener("input", () => {
+                num.value = slider.value;
+                saveFilterState();
+                filterTable();
+            });
+            num.addEventListener("input", () => {
+                slider.value = num.value;
+                saveFilterState();
+                filterTable();
+            });
+        }
+
+        function filterTable() {
+            const typeVal = document.getElementById("filter-type").value;
+            const minDteRaw = parseFloat(document.getElementById("filter-dte-num").value);
+            const minDte = isNaN(minDteRaw) ? 0 : minDteRaw;
+            const maxDteRaw = parseFloat(document.getElementById("filter-max-dte-num").value);
+            const maxDte = isNaN(maxDteRaw) ? Infinity : maxDteRaw;
+            const maxPriceRaw = parseFloat(document.getElementById("filter-price-num").value);
+            const maxPrice = isNaN(maxPriceRaw) ? Infinity : maxPriceRaw;
+            const minVolRaw = parseFloat(document.getElementById("filter-vol-num").value);
+            const minVol = isNaN(minVolRaw) ? 0 : minVolRaw;
+            const maxSpreadRaw = parseFloat(document.getElementById("filter-spread-num").value);
+            const maxSpread = isNaN(maxSpreadRaw) ? Infinity : maxSpreadRaw;
+            const minOiRaw = parseFloat(document.getElementById("filter-oi-num").value);
+            const minOi = isNaN(minOiRaw) ? 0 : minOiRaw;
+
+            const tbody = document.querySelector("#scan-results-table tbody");
+            if (!tbody) return;
+            const rows = tbody.rows;
+            let visibleCount = 0;
+
+            for (let r of rows) {
+                const type = r.cells[0].innerText.trim();
+                const dte = parseFloat(r.cells[2].innerText) || 0;
+                const last = parseFloat(r.cells[5].innerText) || 0;
+                const avgSpreadText = r.cells[9].innerText.trim();
+                const avgSpread = avgSpreadText === "-" ? Infinity : parseFloat(avgSpreadText);
+                const vol = parseFloat(r.cells[10].innerText) || 0;
+                const oi = parseFloat(r.cells[11].innerText) || 0;
+
+                let match = true;
+                if (typeVal !== "ALL" && type !== typeVal) match = false;
+                if (dte < minDte) match = false;
+                if (dte > maxDte) match = false;
+                if (last > maxPrice) match = false;
+                if (vol < minVol) match = false;
+                if (avgSpread > maxSpread) match = false;
+                if (oi < minOi) match = false;
+
+                r.style.display = match ? "" : "none";
+                if (match) visibleCount++;
+            }
+            const countEl = document.getElementById("filter-count");
+            if (countEl) countEl.innerText = visibleCount + " matching contracts";
+            const statMatchEl = document.getElementById("stat-matching-count");
+            if (statMatchEl) statMatchEl.innerText = visibleCount;
+        }
+
+        function resetFilters() {
+            try {
+                localStorage.removeItem(getTickerStorageKey());
+            } catch (e) {}
+            document.getElementById("filter-type").value = "ALL";
+            const resets = [
+                ["filter-dte-slider", "filter-dte-num", 0],
+                ["filter-max-dte-slider", "filter-max-dte-num", 365],
+                ["filter-price-slider", "filter-price-num", 999],
+                ["filter-vol-slider", "filter-vol-num", 0],
+                ["filter-spread-slider", "filter-spread-num", 100],
+                ["filter-oi-slider", "filter-oi-num", 0]
+            ];
+            resets.forEach(([s, n, v]) => {
+                const slider = document.getElementById(s);
+                const num = document.getElementById(n);
+                if (slider) slider.value = v;
+                if (num) num.value = v;
+            });
+            filterTable();
+        }
+
+        async function loadSnapshotsAndInit() {
+            syncInputs("filter-dte-slider", "filter-dte-num");
+            syncInputs("filter-max-dte-slider", "filter-max-dte-num");
+            syncInputs("filter-price-slider", "filter-price-num");
+            syncInputs("filter-vol-slider", "filter-vol-num");
+            syncInputs("filter-spread-slider", "filter-spread-num");
+            syncInputs("filter-oi-slider", "filter-oi-num");
+
+            const statusEl = document.getElementById("batch-status");
+            try {
+                const [snapRes, stateRes] = await Promise.all([
+                    fetch("./data/snapshots.json?v=" + Date.now(), { cache: "no-store" }),
+                    fetch("./data/state.json?v=" + Date.now(), { cache: "no-store" })
+                ]);
+                if (snapRes.ok) {
+                    SNAPSHOT_PAYLOAD = await snapRes.json();
+                }
+                if (stateRes.ok) {
+                    STATE_PAYLOAD = await stateRes.json();
+                }
+            } catch (err) {
+                console.error("Failed to fetch snapshot JSON files:", err);
+            }
+
+            const wl = getWatchlist();
+            const firstTicker = wl[0] || "XLE";
+            if (statusEl) {
+                statusEl.textContent = SNAPSHOT_PAYLOAD.updated_at
+                    ? `Background batch updated: ${SNAPSHOT_PAYLOAD.updated_at}`
+                    : `${wl.length} tickers configured`;
+            }
+            renderTickerView(firstTicker);
+        }
+
+        document.addEventListener("DOMContentLoaded", loadSnapshotsAndInit);
+    </script>
+</body>
+</html>
+"""
+    (out_dir / "index.html").write_text(index_html, encoding="utf-8")
+    print(f"[Index] Wrote dashboard landing page to {out_dir / 'index.html'}.")
+
+
 def main():
     config = get_scan_config()
     global GLOBAL_STATE
@@ -1606,16 +1952,11 @@ def main():
 
     for ticker in config.tickers:
         print(f"\nProcessing {ticker}...")
-        refresh_ticker_with_retry(
-            ticker,
-            config,
-            watchlist_tickers=config.tickers,
-            force_refresh=True,
-            max_attempts_before_log=3,
-        )
+        refresh_ticker_with_retry(ticker, config, max_attempts_before_log=3)
 
     GLOBAL_STATE.save()
-    print("\n50-ticker snapshot generation complete.")
+    build_index_page(Path(config.out_dir), config.tickers)
+    print("\n50-ticker background snapshot & index generation complete.")
 
 
 if __name__ == "__main__":
