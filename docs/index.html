@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options Watchlist Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            margin: 0;
+            padding: 24px 32px 60px;
+            background: #f7f8fa;
+            color: #1a1a1a;
+        }
+        .watchlist-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 10px 16px;
+            margin-bottom: 18px;
+        }
+        .watchlist-bar label {
+            font-size: 0.75em;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-weight: 700;
+        }
+        .watchlist-bar input[type="text"],
+        .watchlist-bar select {
+            padding: 6px 10px;
+            border: 1px solid #ccd2da;
+            border-radius: 6px;
+            font-size: 0.9em;
+            background: #fff;
+            color: #111827;
+            text-transform: uppercase;
+        }
+        .watchlist-bar input[type="text"] {
+            width: 210px;
+        }
+        .watchlist-bar select {
+            min-width: 110px;
+        }
+        .view-ticker-btn {
+            padding: 7px 15px;
+            border: 1px solid #2563eb;
+            border-radius: 6px;
+            background: #2563eb;
+            color: white;
+            font-size: 0.88em;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .view-ticker-btn:hover {
+            background: #1d4ed8;
+        }
+        .status-pill {
+            margin-left: auto;
+            font-size: 0.82em;
+            color: #475569;
+        }
+        h1 {
+            font-size: 1.6em;
+            margin-bottom: 4px;
+            margin-top: 0;
+        }
+        h2 {
+            font-size: 1.15em;
+            margin-top: 28px;
+            border-bottom: 2px solid #e2e4e8;
+            padding-bottom: 6px;
+        }
+        .meta {
+            color: #555;
+            font-size: 0.92em;
+            line-height: 1.6;
+        }
+        .warning-banner {
+            display: none;
+            background: #fff4e5;
+            border: 1px solid #f0b429;
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin: 16px 0;
+        }
+        .warning-banner.visible {
+            display: block;
+        }
+        .warning-banner h2 {
+            border: none;
+            margin: 0 0 8px 0;
+            color: #92400e;
+        }
+        .warning-banner ul {
+            margin: 4px 0 0 0;
+            padding-left: 20px;
+        }
+        .stat-row {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin: 10px 0 4px;
+        }
+        .stat-box {
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 10px 16px;
+            min-width: 140px;
+        }
+        .stat-box.highlight {
+            border-color: #2563eb;
+            background: #f0f5ff;
+        }
+        .stat-box.bias-bullish {
+            border-color: #16a34a;
+            background: #f0fdf4;
+        }
+        .stat-box.bias-bullish .value,
+        .stat-box.bias-bullish .sub {
+            color: #15803d;
+        }
+        .stat-box.bias-bearish {
+            border-color: #dc2626;
+            background: #fef2f2;
+        }
+        .stat-box.bias-bearish .value,
+        .stat-box.bias-bearish .sub {
+            color: #b91c1c;
+        }
+        .stat-box.bias-neutral {
+            border-color: #64748b;
+            background: #f8fafc;
+        }
+        .stat-box.bias-neutral .value,
+        .stat-box.bias-neutral .sub {
+            color: #475569;
+        }
+        .stat-box .label {
+            font-size: 0.72em;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            font-weight: 600;
+        }
+        .stat-box .value {
+            font-size: 1.25em;
+            font-weight: 700;
+            color: #111827;
+            margin-top: 2px;
+        }
+        .stat-box .sub {
+            font-size: 0.75em;
+            color: #2563eb;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+        .bias-note {
+            font-size: 0.88em;
+            color: #374151;
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-top: 10px;
+            line-height: 1.5;
+        }
+        .story-banner {
+            font-size: 0.88em;
+            color: #1e293b;
+            background: #f8fafc;
+            border-left: 4px solid #2563eb;
+            border-top: 1px solid #e2e4e8;
+            border-right: 1px solid #e2e4e8;
+            border-bottom: 1px solid #e2e4e8;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin: 10px 0 8px;
+            line-height: 1.5;
+        }
+        .chart-box {
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 8px;
+            margin: 14px 0;
+            overflow-x: auto;
+        }
+        table.data-table {
+            border-collapse: collapse;
+            width: 100%;
+            background: white;
+            font-size: 0.85em;
+        }
+        table.data-table th,
+        table.data-table td {
+            border: 1px solid #e2e4e8;
+            padding: 6px 10px;
+            text-align: right;
+            white-space: nowrap;
+        }
+        table.data-table th:first-child,
+        table.data-table td:first-child {
+            text-align: left;
+        }
+        table.data-table th {
+            background: #eef1f5;
+            cursor: pointer;
+            user-select: none;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        table.data-table th:hover {
+            background: #dfe4ea;
+        }
+        table.data-table tbody tr:nth-child(even) {
+            background: #fafbfc;
+        }
+        table.data-table tbody tr.flagged-row {
+            background: #fdecea;
+            color: #9a3412;
+        }
+        table.data-table tbody tr:hover {
+            background: #dbeafe !important;
+        }
+        .note {
+            color: #666;
+            font-size: 0.88em;
+            font-style: italic;
+            margin: 4px 0 10px;
+        }
+        .table-wrap {
+            max-height: 600px;
+            overflow: auto;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+        }
+        .filter-bar {
+            display: flex;
+            gap: 18px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            background: white;
+            border: 1px solid #e2e4e8;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 10px 0 14px;
+        }
+        .filter-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .filter-field label {
+            font-size: 0.72em;
+            color: #777;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .filter-field select,
+        .filter-field input[type="number"] {
+            padding: 5px 8px;
+            border: 1px solid #ccd2da;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        .filter-field input[type="number"] {
+            width: 75px;
+        }
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-field input[type="range"] {
+            accent-color: #2563eb;
+            cursor: pointer;
+            width: 110px;
+        }
+        .filter-reset {
+            padding: 6px 14px;
+            border: 1px solid #ccd2da;
+            border-radius: 6px;
+            background: #f1f3f6;
+            cursor: pointer;
+            font-size: 0.85em;
+            height: 30px;
+        }
+        .filter-reset:hover {
+            background: #e2e6eb;
+        }
+        .filter-count {
+            font-size: 0.85em;
+            color: #555;
+            margin-left: auto;
+            align-self: center;
+        }
+        .notice-bar {
+            display: none;
+            background: #fff4e5;
+            border: 1px solid #f0b429;
+            color: #92400e;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin: 12px 0;
+            font-size: 0.9em;
+        }
+        .notice-bar.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="watchlist-bar">
+        <label for="watchlist-input" id="watchlist-label">WATCHLIST TICKER:</label>
+        <input
+            type="text"
+            id="watchlist-input"
+            list="watchlist-tickers"
+            placeholder="Type ticker (e.g. XLE)"
+            autocomplete="off"
+            oninput="syncWatchlistFromInput()"
+            onkeydown="if (event.key === 'Enter') { event.preventDefault(); applySelectedTicker(); }"
+        >
+        <datalist id="watchlist-tickers"></datalist>
+        <select id="watchlist-select" onchange="syncWatchlistFromSelect()" aria-label="Select watchlist ticker"></select>
+        <button type="button" class="view-ticker-btn" onclick="applySelectedTicker()">View Ticker</button>
+        <span class="status-pill" id="batch-status">Loading latest snapshots...</span>
+    </div>
+
+    <div class="header-row">
+        <div>
+            <h1 id="dashboard-title">Options Scanner Dashboard</h1>
+            <div class="meta" id="dashboard-meta">Loading latest background snapshot...</div>
+        </div>
+    </div>
+
+    <div id="ticker-notice" class="notice-bar"></div>
+
+    <div id="warning-banner" class="warning-banner">
+        <h2>Data Quality Warnings</h2>
+        <ul id="warning-list"></ul>
+    </div>
+
+    <h2>Volatility, Map Bias &amp; Pricing Overview</h2>
+    <div class="stat-row">
+        <div class="stat-box bias-neutral" id="bias-box">
+            <div class="label">Underlying Bias (Maps)</div>
+            <div class="value" id="stat-bias">-</div>
+            <div class="sub" id="stat-bias-score">Score: -</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">30D Realized HV</div>
+            <div class="value" id="stat-hv">-</div>
+            <div class="sub">Past Movement</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">ATM Implied Vol (IV)</div>
+            <div class="value" id="stat-iv">-</div>
+            <div class="sub">Market Expectation</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">IV / HV Ratio</div>
+            <div class="value" id="stat-ratio">-</div>
+            <div class="sub" id="stat-pricing-bias">-</div>
+        </div>
+        <div class="stat-box highlight">
+            <div class="label">HV Rank (1Y)</div>
+            <div class="value" id="stat-hv-rank">-</div>
+            <div class="sub">Range Relative</div>
+        </div>
+    </div>
+    <div class="bias-note" id="bias-note"><strong>Latest Map Interpretation:</strong> Waiting for snapshot data...</div>
+
+    <div class="stat-row" style="margin-top: 12px;">
+        <div class="stat-box"><div class="label">Total Chain Contracts</div><div class="value" id="stat-total-contracts">0</div></div>
+        <div class="stat-box"><div class="label">Matching Filter</div><div class="value" id="stat-matching-count">0</div></div>
+        <div class="stat-box"><div class="label">Calls</div><div class="value" id="stat-calls">0</div></div>
+        <div class="stat-box"><div class="label">Puts</div><div class="value" id="stat-puts">0</div></div>
+    </div>
+
+    <h2>Order Flow Story &amp; Market Interpretation Trend</h2>
+    <div class="story-banner" id="story-banner"><strong>Order Flow Story:</strong> Waiting for persisted history...</div>
+    <div class="chart-box">
+        <div id="chart-story" style="width: 100%; height: 760px;"></div>
+    </div>
+
+    <h2>Liquidity Map &amp; Implied Volatility by Expiration</h2>
+    <div class="chart-box">
+        <div id="chart-liquidity" style="width: 100%; height: 420px;"></div>
+    </div>
+    <div class="chart-box">
+        <div id="chart-iv" style="width: 100%; height: 420px;"></div>
+    </div>
+
+    <h2>Filtered Option Contracts</h2>
+    <div class="filter-bar">
+        <div class="filter-field">
+            <label for="filter-type">Type</label>
+            <select id="filter-type" onchange="saveFilterState(); filterTable()">
+                <option value="ALL">All</option>
+                <option value="Call">Call</option>
+                <option value="Put">Put</option>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="filter-dte-num">Min DTE</label>
+            <div class="slider-group">
+                <input type="range" id="filter-dte-slider" min="0" max="365" value="0">
+                <input type="number" id="filter-dte-num" min="0" max="365" value="0">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-max-dte-num">Max DTE</label>
+            <div class="slider-group">
+                <input type="range" id="filter-max-dte-slider" min="0" max="365" value="365">
+                <input type="number" id="filter-max-dte-num" min="0" max="365" value="365">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-price-num">Max Option Price ($)</label>
+            <div class="slider-group">
+                <input type="range" id="filter-price-slider" min="0" max="1000" value="999">
+                <input type="number" id="filter-price-num" min="0" max="1000" value="999">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-vol-num">Min Volume</label>
+            <div class="slider-group">
+                <input type="range" id="filter-vol-slider" min="0" max="5000" value="0">
+                <input type="number" id="filter-vol-num" min="0" max="100000" value="0">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-spread-num">Max Avg Spread %</label>
+            <div class="slider-group">
+                <input type="range" id="filter-spread-slider" min="0" max="100" value="100">
+                <input type="number" id="filter-spread-num" min="0" max="100" value="100">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="filter-oi-num">Min OI</label>
+            <div class="slider-group">
+                <input type="range" id="filter-oi-slider" min="0" max="5000" value="0">
+                <input type="number" id="filter-oi-num" min="0" max="100000" value="0">
+            </div>
+        </div>
+        <button type="button" class="filter-reset" onclick="resetFilters()">Reset Filters</button>
+        <div class="filter-count" id="filter-count">0 matching contracts</div>
+    </div>
+
+    <div class="note">Click any table header to sort. Avg Spread% averages valid spread% samples across snapshots (hover cell for sample count). Rows with data-quality issues are highlighted in red.</div>
+    <div class="table-wrap">
+        <table class="data-table" id="scan-results-table" data-sort-col="" data-sort-dir="">
+            <thead>
+                <tr>
+                    <th onclick="sortTable('scan-results-table', 0)">Type</th>
+                    <th onclick="sortTable('scan-results-table', 1)">Exp</th>
+                    <th onclick="sortTable('scan-results-table', 2)">DTE</th>
+                    <th onclick="sortTable('scan-results-table', 3)">Strike</th>
+                    <th onclick="sortTable('scan-results-table', 4)">Moneyness%</th>
+                    <th onclick="sortTable('scan-results-table', 5)">Last</th>
+                    <th onclick="sortTable('scan-results-table', 6)">Bid</th>
+                    <th onclick="sortTable('scan-results-table', 7)">Ask</th>
+                    <th onclick="sortTable('scan-results-table', 8)">Mid</th>
+                    <th onclick="sortTable('scan-results-table', 9)">Avg Spread%</th>
+                    <th onclick="sortTable('scan-results-table', 10)">Vol</th>
+                    <th onclick="sortTable('scan-results-table', 11)">OI</th>
+                    <th onclick="sortTable('scan-results-table', 12)">Vol/OI</th>
+                    <th onclick="sortTable('scan-results-table', 13)">IV</th>
+                    <th onclick="sortTable('scan-results-table', 14)">Delta</th>
+                    <th onclick="sortTable('scan-results-table', 15)">Theta</th>
+                    <th onclick="sortTable('scan-results-table', 16)">NoBid</th>
+                    <th onclick="sortTable('scan-results-table', 17)">Stale</th>
+                </tr>
+            </thead>
+            <tbody id="contracts-tbody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        let SNAPSHOT_PAYLOAD = { updated_at: null, watchlist: [], tickers: {} };
+        let STATE_PAYLOAD = { saved_at: null, sample_rounds: {}, market_history: {}, spread_history: {} };
+        let ACTIVE_TICKER = null;
+
+        function getWatchlist() {
+            const fromSnap = Array.isArray(SNAPSHOT_PAYLOAD.watchlist) ? SNAPSHOT_PAYLOAD.watchlist : [];
+            const fromKeys = Object.keys(SNAPSHOT_PAYLOAD.tickers || {});
+            const merged = [];
+            const seen = new Set();
+            for (const t of [...fromSnap, ...fromKeys]) {
+                const up = String(t || "").trim().toUpperCase();
+                if (up && !seen.has(up)) {
+                    merged.push(up);
+                    seen.add(up);
+                }
+            }
+            return merged;
+        }
+
+        function populateWatchlistControls(selectedTicker) {
+            const wl = getWatchlist();
+            const lbl = document.getElementById("watchlist-label");
+            if (lbl) {
+                lbl.textContent = `WATCHLIST TICKER (${wl.length}):`;
+            }
+            const datalist = document.getElementById("watchlist-tickers");
+            if (datalist) {
+                datalist.innerHTML = wl.map(t => `<option value="${t}"></option>`).join("");
+            }
+            const select = document.getElementById("watchlist-select");
+            if (select) {
+                select.innerHTML = wl.map(
+                    t => `<option value="${t}"${t === selectedTicker ? " selected" : ""}>${t}</option>`
+                ).join("");
+            }
+            const input = document.getElementById("watchlist-input");
+            if (input && selectedTicker) {
+                input.value = selectedTicker;
+            }
+        }
+
+        function syncWatchlistFromInput() {
+            const input = document.getElementById("watchlist-input");
+            const select = document.getElementById("watchlist-select");
+            if (!input || !select) return;
+            const val = input.value.trim().toUpperCase();
+            const match = Array.from(select.options).find(o => o.value === val);
+            if (match) {
+                select.value = val;
+            }
+        }
+
+        function syncWatchlistFromSelect() {
+            const input = document.getElementById("watchlist-input");
+            const select = document.getElementById("watchlist-select");
+            if (!input || !select) return;
+            input.value = select.value;
+            applySelectedTicker();
+        }
+
+        function applySelectedTicker() {
+            const input = document.getElementById("watchlist-input");
+            const select = document.getElementById("watchlist-select");
+            const raw = (input && input.value.trim()) ? input.value.trim() : (select ? select.value : "");
+            const clean = raw.toUpperCase().replace(/[^A-Z0-9.\-]/g, "");
+            if (!clean) return;
+            renderTickerView(clean);
+        }
+
+        function escapeHtml(str) {
+            return String(str ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+        }
+
+        function fmtNum(v, pct = false, dec = 2) {
+            if (v === null || v === undefined || Number.isNaN(Number(v))) return "-";
+            const n = Number(v);
+            if (!Number.isFinite(n)) return "-";
+            return pct ? `${n.toFixed(dec)}%` : n.toFixed(dec);
+        }
+
+        function summarizeNarrative(history) {
+            if (!history || history.length === 0) {
+                return "Awaiting snapshots to build the order-flow narrative.";
+            }
+            const first = history[0];
+            const latest = history[history.length - 1];
+            const n = history.length;
+
+            if (n === 1) {
+                const volTxt = (latest.call_vol_share !== null && latest.call_vol_share !== undefined)
+                    ? `Call volume share is ${Number(latest.call_vol_share).toFixed(1)}%`
+                    : "Call/put volume share is balanced";
+                const skewTxt = (latest.skew_diff_pct !== null && latest.skew_diff_pct !== undefined)
+                    ? `Put-Call IV skew stands at ${Number(latest.skew_diff_pct) >= 0 ? "+" : ""}${Number(latest.skew_diff_pct).toFixed(2)}%`
+                    : "IV skew is flat";
+                return `Initial snapshot (#${latest.round} at ${latest.timestamp}): Bias is <strong>${escapeHtml(latest.bias)}</strong> (score ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)}; yellow neutral zone is -0.35 to +0.35). ${volTxt}; ${skewTxt}. Additional scheduled background runs will chart directional momentum.`;
+            }
+
+            const delta = Number(latest.score) - Number(first.score);
+            let trend = `held steady (${Number(first.score) >= 0 ? "+" : ""}${Number(first.score).toFixed(2)} &rarr; ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)})`;
+            if (delta >= 0.15) {
+                trend = `strengthened bullishly (${Number(first.score) >= 0 ? "+" : ""}${Number(first.score).toFixed(2)} &rarr; ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)})`;
+            } else if (delta <= -0.15) {
+                trend = `shifted bearishly (${Number(first.score) >= 0 ? "+" : ""}${Number(first.score).toFixed(2)} &rarr; ${Number(latest.score) >= 0 ? "+" : ""}${Number(latest.score).toFixed(2)})`;
+            }
+
+            const flips = [];
+            for (let i = 1; i < n; i++) {
+                if (history[i].bias !== history[i - 1].bias) {
+                    flips.push(`${history[i - 1].bias}&rarr;${history[i].bias} @ ${history[i].timestamp}`);
+                }
+            }
+            const flipTxt = flips.length > 0
+                ? ` Regime shifts: ${flips.join(", ")}.`
+                : ` Regime remained <strong>${escapeHtml(latest.bias)}</strong> across all ${n} samples.`;
+
+            let volTxt = "";
+            if (first.call_vol_share !== null && latest.call_vol_share !== null) {
+                const dv = Number(latest.call_vol_share) - Number(first.call_vol_share);
+                volTxt = ` Call volume flow moved ${Number(first.call_vol_share).toFixed(1)}% &rarr; ${Number(latest.call_vol_share).toFixed(1)}% (${dv >= 0 ? "+" : ""}${dv.toFixed(1)}%).`;
+            }
+
+            let spotTxt = "";
+            if (first.spot && latest.spot && Number(first.spot) > 0) {
+                const dpPct = ((Number(latest.spot) - Number(first.spot)) / Number(first.spot)) * 100.0;
+                spotTxt = ` Underlying moved $${Number(first.spot).toFixed(2)} &rarr; $${Number(latest.spot).toFixed(2)} (${dpPct >= 0 ? "+" : ""}${dpPct.toFixed(2)}%).`;
+            }
+
+            return `Across <strong>${n}</strong> snapshots (${first.timestamp} &ndash; ${latest.timestamp}), composite order-flow bias ${trend}.${flipTxt}${volTxt}${spotTxt}`;
+        }
+
+        function computeDeltas(values) {
+            const base = values.find(v => v !== null && v !== undefined && Number.isFinite(Number(v)));
+            if (base === undefined) return values.map(() => null);
+            return values.map(v => {
+                if (v === null || v === undefined || !Number.isFinite(Number(v))) return null;
+                return +(Number(v) - Number(base)).toFixed(2);
+            });
+        }
+
+        function symmetricRange(seriesList, minSpan = 5.0, padRatio = 0.30) {
+            let peak = 0;
+            for (const s of seriesList) {
+                for (const v of s) {
+                    if (v !== null && v !== undefined && Number.isFinite(Number(v))) {
+                        peak = Math.max(peak, Math.abs(Number(v)));
+                    }
+                }
+            }
+            const bound = Math.max(minSpan, +(peak * (1.0 + padRatio)).toFixed(2));
+            return [-bound, bound];
+        }
+
+        function renderTickerCharts(ticker, snap, history) {
+            const storyEl = document.getElementById("chart-story");
+            const liqEl = document.getElementById("chart-liquidity");
+            const ivEl = document.getElementById("chart-iv");
+
+            if (!history || history.length === 0) {
+                Plotly.purge(storyEl);
+                storyEl.innerHTML = "<p style='padding:12px;'>No market interpretation history recorded yet.</p>";
+            } else {
+                const times = history.map(h => h.timestamp);
+                const rounds = history.map(h => h.round);
+                const scores = history.map(h => h.score);
+                const biases = history.map(h => h.bias);
+                const summaries = history.map(h => h.summary || "");
+                const spots = history.map(h => h.spot);
+                const callVols = history.map(h => h.call_vol_share);
+                const callOis = history.map(h => h.call_oi_share);
+                const dCallVols = computeDeltas(callVols);
+                const dCallOis = computeDeltas(callOis);
+                const skews = history.map(h => h.skew_diff_pct);
+                const slopes = history.map(h => h.iv_slope_pct);
+                const atmIvs = history.map(h => h.atm_iv);
+
+                const markerColors = biases.map(b => b === "Bullish" ? "#16a34a" : (b === "Bearish" ? "#dc2626" : "#ca8a04"));
+                const hoverStory = rounds.map((r, i) =>
+                    `<b>Sample #${r} (${times[i]})</b><br>Regime: <b>${biases[i]}</b> (Score: ${scores[i] >= 0 ? "+" : ""}${Number(scores[i]).toFixed(2)})<br>Drivers: ${escapeHtml(summaries[i])}`
+                );
+
+                const traces = [
+                    {
+                        x: times, y: scores, name: "Bias Score", mode: "lines+markers",
+                        line: { color: "#1d4ed8", width: 2.5 },
+                        marker: { size: 9, color: markerColors, line: { width: 1.5, color: "white" } },
+                        text: hoverStory, hovertemplate: "%{text}<extra></extra>", xaxis: "x", yaxis: "y"
+                    },
+                    {
+                        x: times, y: spots, name: "Spot Price ($)", mode: "lines+markers",
+                        line: { color: "#f59e0b", width: 2, dash: "dash" },
+                        marker: { size: 6, color: "#f59e0b" },
+                        hovertemplate: "Spot: $%{y:.2f}<extra></extra>", xaxis: "x", yaxis: "y2"
+                    },
+                    {
+                        x: times, y: dCallVols, name: "Δ Call Vol Share (pts)", mode: "lines+markers",
+                        line: { color: "#0d9488", width: 2.4 },
+                        marker: { size: 8, color: "#0d9488", line: { width: 1.2, color: "white" } },
+                        text: dCallVols.map((dv, i) => dv !== null && callVols[i] !== null ? `Δ Call Vol: ${dv >= 0 ? "+" : ""}${dv.toFixed(2)} pts (Share: ${Number(callVols[i]).toFixed(1)}%)` : "Δ Call Vol: N/A"),
+                        hovertemplate: "%{text}<extra></extra>", xaxis: "x", yaxis: "y3"
+                    },
+                    {
+                        x: times, y: dCallOis, name: "Δ Call OI Share (pts)", mode: "lines+markers",
+                        line: { color: "#6366f1", width: 2.2, dash: "dash" },
+                        marker: { size: 7, color: "#6366f1", line: { width: 1.2, color: "white" } },
+                        text: dCallOis.map((doVal, i) => doVal !== null && callOis[i] !== null ? `Δ Call OI: ${doVal >= 0 ? "+" : ""}${doVal.toFixed(2)} pts (Share: ${Number(callOis[i]).toFixed(1)}%)` : "Δ Call OI: N/A"),
+                        hovertemplate: "%{text}<extra></extra>", xaxis: "x", yaxis: "y3"
+                    },
+                    {
+                        x: times, y: skews, name: "Put-Call IV Skew %", mode: "lines+markers",
+                        line: { color: "#e11d48", width: 2 }, marker: { size: 6 },
+                        hovertemplate: "Put-Call Skew: %{y:+.2f}%<extra></extra>", xaxis: "x", yaxis: "y4"
+                    },
+                    {
+                        x: times, y: slopes, name: "IV Term Slope %", mode: "lines+markers",
+                        line: { color: "#8b5cf6", width: 1.8, dash: "dash" }, marker: { size: 6 },
+                        hovertemplate: "IV Term Slope: %{y:+.2f}%<extra></extra>", xaxis: "x", yaxis: "y4"
+                    },
+                    {
+                        x: times, y: atmIvs, name: "ATM IV %", mode: "lines+markers",
+                        line: { color: "#0284c7", width: 2 }, marker: { size: 6 },
+                        hovertemplate: "ATM IV: %{y:.2f}%<extra></extra>", xaxis: "x", yaxis: "y5"
+                    }
+                ];
+
+                const flowRange = symmetricRange([dCallVols, dCallOis], 5.0, 0.30);
+                const layout = {
+                    template: "plotly_white",
+                    height: 760,
+                    hovermode: "x unified",
+                    legend: { orientation: "h", yanchor: "bottom", y: 1.03, xanchor: "left", x: 0 },
+                    margin: { l: 60, r: 60, t: 75, b: 50 },
+                    xaxis: { title: "Sample Timestamp", anchor: "y4", showgrid: true },
+                    yaxis:  { title: "Bias Score", range: [-2.4, 2.4], domain: [0.64, 1.0] },
+                    yaxis2: { title: "Spot ($)", overlaying: "y", side: "right", showgrid: false },
+                    yaxis3: { title: "Δ Flow (pts)", range: flowRange, zeroline: false, domain: [0.33, 0.57] },
+                    yaxis4: { title: "Skew / Slope %", domain: [0.0, 0.25] },
+                    yaxis5: { title: "ATM IV %", overlaying: "y4", side: "right", showgrid: false },
+                    shapes: [
+                        { type: "rect", xref: "paper", yref: "y", x0: 0, x1: 1, y0: 0.35, y1: 2.4, fillcolor: "rgba(22, 163, 74, 0.07)", line: { width: 0 }, layer: "below" },
+                        { type: "rect", xref: "paper", yref: "y", x0: 0, x1: 1, y0: -0.35, y1: 0.35, fillcolor: "rgba(250, 204, 21, 0.28)", line: { width: 0 }, layer: "below" },
+                        { type: "rect", xref: "paper", yref: "y", x0: 0, x1: 1, y0: -2.4, y1: -0.35, fillcolor: "rgba(220, 38, 38, 0.07)", line: { width: 0 }, layer: "below" },
+                        { type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: 0.35, y1: 0.35, line: { color: "#eab308", width: 1.2, dash: "dash" } },
+                        { type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: -0.35, y1: -0.35, line: { color: "#eab308", width: 1.2, dash: "dash" } },
+                        { type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: 0.0, y1: 0.0, line: { color: "#94a3b8", width: 1, dash: "dot" } },
+                        { type: "line", xref: "paper", yref: "y3", x0: 0, x1: 1, y0: 0.0, y1: 0.0, line: { color: "#64748b", width: 1.2, dash: "dot" } },
+                        { type: "line", xref: "paper", yref: "y4", x0: 0, x1: 1, y0: 0.0, y1: 0.0, line: { color: "#94a3b8", width: 1, dash: "dot" } }
+                    ],
+                    annotations: [
+                        { text: `${ticker} Composite Order-Flow Bias Score vs. Spot Price (Yellow Strip = -0.35 to +0.35)`, xref: "paper", yref: "paper", x: 0.5, y: 1.025, showarrow: false, font: { size: 13, color: "#1a1a1a" } },
+                        { text: "Liquidity-Weighted Order Flow Shift (Δ vs. First Sample — High Sensitivity)", xref: "paper", yref: "paper", x: 0.5, y: 0.595, showarrow: false, font: { size: 13, color: "#1a1a1a" } },
+                        { text: "Volatility Structure (Put-Call IV Skew %, Term Slope % & ATM IV %)", xref: "paper", yref: "paper", x: 0.5, y: 0.275, showarrow: false, font: { size: 13, color: "#1a1a1a" } }
+                    ]
+                };
+                Plotly.newPlot(storyEl, traces, layout, { responsive: true });
+            }
+
+            const contracts = (snap && Array.isArray(snap.contracts)) ? snap.contracts : [];
+            if (contracts.length === 0) {
+                Plotly.purge(liqEl);
+                liqEl.innerHTML = "<p style='padding:12px;'>No contract data available for liquidity map.</p>";
+                Plotly.purge(ivEl);
+                ivEl.innerHTML = "<p style='padding:12px;'>No reliable IV data available for smile chart.</p>";
+                return;
+            }
+
+            const liqTraces = ["Call", "Put"].map(optType => {
+                const sub = contracts.filter(c => c.type === optType);
+                return {
+                    x: sub.map(c => Number(c.vol || 0)),
+                    y: sub.map(c => c.avgSpread !== null && c.avgSpread !== undefined ? Number(c.avgSpread) : 100.0),
+                    name: optType,
+                    mode: "markers",
+                    marker: {
+                        size: sub.map(c => Math.max(8, Math.sqrt(Math.max(1, Number(c.oi || 1))) * 0.14)),
+                        color: optType === "Call" ? "#2563eb" : "#ef4444",
+                        opacity: 0.72,
+                        line: { width: 1, color: "white" }
+                    },
+                    text: sub.map(c => `${optType} $${fmtNum(c.strike)} (${c.exp}, ${c.dte}d)<br>Vol: ${Number(c.vol || 0).toLocaleString()} | OI: ${Number(c.oi || 0).toLocaleString()}<br>Avg Spread: ${fmtNum(c.avgSpread, true)} | Last: $${fmtNum(c.last)}`),
+                    hovertemplate: "%{text}<extra></extra>"
+                };
+            });
+
+            Plotly.newPlot(liqEl, liqTraces, {
+                template: "plotly_white",
+                height: 420,
+                title: { text: `${ticker} Liquidity Map (Volume vs Avg Spread %)`, font: { size: 15 } },
+                xaxis: { title: "Volume" },
+                yaxis: { title: "Avg Spread %" },
+                legend: { title: { text: "Option Type" } },
+                margin: { l: 60, r: 30, t: 55, b: 50 }
+            }, { responsive: true });
+
+            const validIv = contracts.filter(c => !c.noBid && !c.arb && c.iv !== null && c.iv !== undefined && Number(c.iv) > 0);
+            if (validIv.length === 0) {
+                Plotly.purge(ivEl);
+                ivEl.innerHTML = "<p style='padding:12px;'>No reliable IV data available for smile chart.</p>";
+                return;
+            }
+
+            const exps = Array.from(new Set(validIv.map(c => c.exp))).sort();
+            const palette = ["#2563eb", "#16a34a", "#f59e0b", "#8b5cf6", "#0d9488", "#e11d48", "#6366f1", "#ca8a04"];
+            const ivTraces = [];
+            exps.forEach((exp, idx) => {
+                ["Call", "Put"].forEach(optType => {
+                    const sub = validIv
+                        .filter(c => c.exp === exp && c.type === optType)
+                        .sort((a, b) => Number(a.strike) - Number(b.strike));
+                    if (sub.length > 0) {
+                        ivTraces.push({
+                            x: sub.map(c => Number(c.strike)),
+                            y: sub.map(c => +(Number(c.iv) / 100.0).toFixed(4)),
+                            name: `${exp} (${optType})`,
+                            mode: "lines+markers",
+                            line: { color: palette[idx % palette.length], width: 2, dash: optType === "Put" ? "dash" : "solid" },
+                            marker: { size: 6 },
+                            hovertemplate: `${exp} ${optType}<br>Strike: $%{x}<br>IV: %{y:.2%}<extra></extra>`
+                        });
+                    }
+                });
+            });
+
+            Plotly.newPlot(ivEl, ivTraces, {
+                template: "plotly_white",
+                height: 420,
+                title: { text: `${ticker} Implied Volatility Smile by Expiration`, font: { size: 15 } },
+                xaxis: { title: "Strike Price" },
+                yaxis: { title: "Implied Volatility", tickformat: ".1%" },
+                margin: { l: 65, r: 30, t: 55, b: 50 }
+            }, { responsive: true });
+        }
+
+        function renderTickerView(ticker) {
+            ACTIVE_TICKER = ticker;
+            populateWatchlistControls(ticker);
+
+            const snap = (SNAPSHOT_PAYLOAD.tickers || {})[ticker];
+            const history = (STATE_PAYLOAD.market_history || {})[ticker] || [];
+            const noticeEl = document.getElementById("ticker-notice");
+            const warnBanner = document.getElementById("warning-banner");
+            const warnList = document.getElementById("warning-list");
+
+            if (!snap) {
+                if (noticeEl) {
+                    noticeEl.textContent = `No snapshot found yet for ${ticker}. It may not be in the 50-ticker background watchlist or hasn't finished its first scan.`;
+                    noticeEl.classList.add("visible");
+                }
+                document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
+                document.getElementById("dashboard-meta").textContent = "Awaiting snapshot for this symbol.";
+                document.getElementById("contracts-tbody").innerHTML = "";
+                document.getElementById("filter-count").textContent = "0 matching contracts";
+                document.getElementById("stat-matching-count").textContent = "0";
+                renderTickerCharts(ticker, null, []);
+                return;
+            }
+
+            if (noticeEl) {
+                noticeEl.classList.remove("visible");
+                noticeEl.textContent = "";
+            }
+
+            const spotStr = (snap.spot !== null && snap.spot !== undefined) ? `$${Number(snap.spot).toFixed(2)}` : "N/A";
+            const rounds = snap.sample_rounds || history.length || 1;
+            document.title = `${ticker} Options Scan Dashboard`;
+            document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
+            document.getElementById("dashboard-meta").innerHTML =
+                `Underlying Price: <strong>${spotStr}</strong> | Latest Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> | Spread Samples: <strong>${rounds}</strong> (every ${SPREAD_SAMPLE_INTERVAL_SECONDS = 60}s)`;
+
+            const warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
+            if (warnings.length > 0 && warnBanner && warnList) {
+                warnList.innerHTML = warnings.map(w => `<li>${escapeHtml(w)}</li>`).join("");
+                warnBanner.classList.add("visible");
+            } else if (warnBanner) {
+                warnBanner.classList.remove("visible");
+            }
+
+            const ins = snap.insights || {};
+            const bias = ins.map_bias || "Neutral";
+            const score = Number(ins.map_bias_score || 0);
+            const biasBox = document.getElementById("bias-box");
+            if (biasBox) {
+                biasBox.className = "stat-box " + (bias === "Bullish" ? "bias-bullish" : (bias === "Bearish" ? "bias-bearish" : "bias-neutral"));
+            }
+            document.getElementById("stat-bias").textContent = bias;
+            document.getElementById("stat-bias-score").textContent = `Score: ${score >= 0 ? "+" : ""}${score.toFixed(2)}`;
+            document.getElementById("stat-hv").textContent = ins.current_30d_hv !== null && ins.current_30d_hv !== undefined ? `${Number(ins.current_30d_hv).toFixed(1)}%` : "-";
+            document.getElementById("stat-iv").textContent = ins.atm_iv !== null && ins.atm_iv !== undefined ? `${Number(ins.atm_iv).toFixed(1)}%` : "-";
+            document.getElementById("stat-ratio").textContent = ins.iv_hv_ratio !== null && ins.iv_hv_ratio !== undefined ? Number(ins.iv_hv_ratio).toFixed(2) : "-";
+            document.getElementById("stat-pricing-bias").textContent = ins.pricing_bias || "N/A";
+            document.getElementById("stat-hv-rank").textContent = ins.hv_rank !== null && ins.hv_rank !== undefined ? `${Number(ins.hv_rank).toFixed(1)}%` : "-";
+            document.getElementById("bias-note").innerHTML = `<strong>Latest Map Interpretation (${escapeHtml(bias)}):</strong> ${escapeHtml(ins.map_bias_summary || "")}`;
+
+            const counts = snap.counts || {};
+            document.getElementById("stat-total-contracts").textContent = counts.total ?? 0;
+            document.getElementById("stat-calls").textContent = counts.calls ?? 0;
+            document.getElementById("stat-puts").textContent = counts.puts ?? 0;
+
+            document.getElementById("story-banner").innerHTML = `<strong>Order Flow Story:</strong> ${summarizeNarrative(history)}`;
+
+            const contracts = Array.isArray(snap.contracts) ? snap.contracts : [];
+            const tbody = document.getElementById("contracts-tbody");
+            tbody.innerHTML = contracts.map(r => {
+                const isFlagged = Boolean(r.noBid || r.stale || r.arb);
+                const rowCls = isFlagged ? ' class="flagged-row"' : "";
+                const spreadTitle = `Averaged across ${r.samples || 0} sample(s)`;
+                return `<tr${rowCls}>
+                    <td>${escapeHtml(r.type || "-")}</td>
+                    <td>${escapeHtml(r.exp || "-")}</td>
+                    <td>${r.dte ?? 0}</td>
+                    <td>${fmtNum(r.strike)}</td>
+                    <td>${fmtNum(r.moneyness, true)}</td>
+                    <td>${fmtNum(r.last)}</td>
+                    <td>${fmtNum(r.bid)}</td>
+                    <td>${fmtNum(r.ask)}</td>
+                    <td>${fmtNum(r.mid)}</td>
+                    <td title="${escapeHtml(spreadTitle)}">${fmtNum(r.avgSpread, true)}</td>
+                    <td>${r.vol ?? 0}</td>
+                    <td>${r.oi ?? 0}</td>
+                    <td>${fmtNum(r.volOi)}</td>
+                    <td>${fmtNum(r.iv, true)}</td>
+                    <td>${fmtNum(r.delta, false, 3)}</td>
+                    <td>${fmtNum(r.theta, false, 3)}</td>
+                    <td>${r.noBid ? "YES" : "No"}</td>
+                    <td>${r.stale ? "YES" : "No"}</td>
+                </tr>`;
+            }).join("");
+
+            loadFilterState();
+            filterTable();
+            renderTickerCharts(ticker, snap, history);
+        }
+
+        function sortTable(tableId, colIdx) {
+            const table = document.getElementById(tableId);
+            const tbody = table.tBodies[0];
+            const rows = Array.from(tbody.rows);
+            const asc = table.dataset.sortCol == colIdx ? table.dataset.sortDir !== "asc" : true;
+            rows.sort((a, b) => {
+                const xText = a.cells[colIdx].innerText.trim();
+                const yText = b.cells[colIdx].innerText.trim();
+                const xNum = parseFloat(xText.replace(/[^0-9.\-]/g, ""));
+                const yNum = parseFloat(yText.replace(/[^0-9.\-]/g, ""));
+                const bothNumeric = !isNaN(xNum) && !isNaN(yNum) && xText.match(/^-?[\d.,]+%?$/) && yText.match(/^-?[\d.,]+%?$/);
+                if (bothNumeric) {
+                    return asc ? xNum - yNum : yNum - xNum;
+                }
+                return asc ? xText.localeCompare(yText) : yText.localeCompare(xText);
+            });
+            table.dataset.sortCol = colIdx;
+            table.dataset.sortDir = asc ? "asc" : "desc";
+            rows.forEach(r => tbody.appendChild(r));
+        }
+
+        function getTickerStorageKey() {
+            const t = (ACTIVE_TICKER || document.getElementById("watchlist-input")?.value || "DEFAULT").toUpperCase();
+            return "options_filter_state_" + t;
+        }
+
+        function saveFilterState() {
+            const state = {
+                type: document.getElementById("filter-type").value,
+                dte: document.getElementById("filter-dte-num").value,
+                maxDte: document.getElementById("filter-max-dte-num").value,
+                price: document.getElementById("filter-price-num").value,
+                vol: document.getElementById("filter-vol-num").value,
+                spread: document.getElementById("filter-spread-num").value,
+                oi: document.getElementById("filter-oi-num").value
+            };
+            try {
+                localStorage.setItem(getTickerStorageKey(), JSON.stringify(state));
+            } catch (e) {}
+        }
+
+        function loadFilterState() {
+            let saved = null;
+            try {
+                saved = localStorage.getItem(getTickerStorageKey());
+            } catch (e) {}
+            if (!saved) return;
+            try {
+                const state = JSON.parse(saved);
+                if (state.type !== undefined) document.getElementById("filter-type").value = state.type;
+                const pairs = [
+                    ["filter-dte-slider", "filter-dte-num", state.dte],
+                    ["filter-max-dte-slider", "filter-max-dte-num", state.maxDte],
+                    ["filter-price-slider", "filter-price-num", state.price],
+                    ["filter-vol-slider", "filter-vol-num", state.vol],
+                    ["filter-spread-slider", "filter-spread-num", state.spread],
+                    ["filter-oi-slider", "filter-oi-num", state.oi]
+                ];
+                pairs.forEach(([sId, nId, val]) => {
+                    if (val !== undefined && val !== "") {
+                        const slider = document.getElementById(sId);
+                        const num = document.getElementById(nId);
+                        if (slider) slider.value = val;
+                        if (num) num.value = val;
+                    }
+                });
+            } catch (e) {}
+        }
+
+        function syncInputs(sliderId, numId) {
+            const slider = document.getElementById(sliderId);
+            const num = document.getElementById(numId);
+            if (!slider || !num) return;
+            slider.addEventListener("input", () => {
+                num.value = slider.value;
+                saveFilterState();
+                filterTable();
+            });
+            num.addEventListener("input", () => {
+                slider.value = num.value;
+                saveFilterState();
+                filterTable();
+            });
+        }
+
+        function filterTable() {
+            const typeVal = document.getElementById("filter-type").value;
+            const minDteRaw = parseFloat(document.getElementById("filter-dte-num").value);
+            const minDte = isNaN(minDteRaw) ? 0 : minDteRaw;
+            const maxDteRaw = parseFloat(document.getElementById("filter-max-dte-num").value);
+            const maxDte = isNaN(maxDteRaw) ? Infinity : maxDteRaw;
+            const maxPriceRaw = parseFloat(document.getElementById("filter-price-num").value);
+            const maxPrice = isNaN(maxPriceRaw) ? Infinity : maxPriceRaw;
+            const minVolRaw = parseFloat(document.getElementById("filter-vol-num").value);
+            const minVol = isNaN(minVolRaw) ? 0 : minVolRaw;
+            const maxSpreadRaw = parseFloat(document.getElementById("filter-spread-num").value);
+            const maxSpread = isNaN(maxSpreadRaw) ? Infinity : maxSpreadRaw;
+            const minOiRaw = parseFloat(document.getElementById("filter-oi-num").value);
+            const minOi = isNaN(minOiRaw) ? 0 : minOiRaw;
+
+            const tbody = document.querySelector("#scan-results-table tbody");
+            if (!tbody) return;
+            const rows = tbody.rows;
+            let visibleCount = 0;
+
+            for (let r of rows) {
+                const type = r.cells[0].innerText.trim();
+                const dte = parseFloat(r.cells[2].innerText) || 0;
+                const last = parseFloat(r.cells[5].innerText) || 0;
+                const avgSpreadText = r.cells[9].innerText.trim();
+                const avgSpread = avgSpreadText === "-" ? Infinity : parseFloat(avgSpreadText);
+                const vol = parseFloat(r.cells[10].innerText) || 0;
+                const oi = parseFloat(r.cells[11].innerText) || 0;
+
+                let match = true;
+                if (typeVal !== "ALL" && type !== typeVal) match = false;
+                if (dte < minDte) match = false;
+                if (dte > maxDte) match = false;
+                if (last > maxPrice) match = false;
+                if (vol < minVol) match = false;
+                if (avgSpread > maxSpread) match = false;
+                if (oi < minOi) match = false;
+
+                r.style.display = match ? "" : "none";
+                if (match) visibleCount++;
+            }
+            const countEl = document.getElementById("filter-count");
+            if (countEl) countEl.innerText = visibleCount + " matching contracts";
+            const statMatchEl = document.getElementById("stat-matching-count");
+            if (statMatchEl) statMatchEl.innerText = visibleCount;
+        }
+
+        function resetFilters() {
+            try {
+                localStorage.removeItem(getTickerStorageKey());
+            } catch (e) {}
+            document.getElementById("filter-type").value = "ALL";
+            const resets = [
+                ["filter-dte-slider", "filter-dte-num", 0],
+                ["filter-max-dte-slider", "filter-max-dte-num", 365],
+                ["filter-price-slider", "filter-price-num", 999],
+                ["filter-vol-slider", "filter-vol-num", 0],
+                ["filter-spread-slider", "filter-spread-num", 100],
+                ["filter-oi-slider", "filter-oi-num", 0]
+            ];
+            resets.forEach(([s, n, v]) => {
+                const slider = document.getElementById(s);
+                const num = document.getElementById(n);
+                if (slider) slider.value = v;
+                if (num) num.value = v;
+            });
+            filterTable();
+        }
+
+        async function loadSnapshotsAndInit() {
+            syncInputs("filter-dte-slider", "filter-dte-num");
+            syncInputs("filter-max-dte-slider", "filter-max-dte-num");
+            syncInputs("filter-price-slider", "filter-price-num");
+            syncInputs("filter-vol-slider", "filter-vol-num");
+            syncInputs("filter-spread-slider", "filter-spread-num");
+            syncInputs("filter-oi-slider", "filter-oi-num");
+
+            const statusEl = document.getElementById("batch-status");
+            try {
+                const [snapRes, stateRes] = await Promise.all([
+                    fetch("./data/snapshots.json?v=" + Date.now(), { cache: "no-store" }),
+                    fetch("./data/state.json?v=" + Date.now(), { cache: "no-store" })
+                ]);
+                if (snapRes.ok) {
+                    SNAPSHOT_PAYLOAD = await snapRes.json();
+                }
+                if (stateRes.ok) {
+                    STATE_PAYLOAD = await stateRes.json();
+                }
+            } catch (err) {
+                console.error("Failed to fetch snapshot JSON files:", err);
+            }
+
+            const wl = getWatchlist();
+            const firstTicker = wl[0] || "XLE";
+            if (statusEl) {
+                statusEl.textContent = SNAPSHOT_PAYLOAD.updated_at
+                    ? `Background batch updated: ${SNAPSHOT_PAYLOAD.updated_at}`
+                    : `${wl.length} tickers configured`;
+            }
+            renderTickerView(firstTicker);
+        }
+
+        document.addEventListener("DOMContentLoaded", loadSnapshotsAndInit);
+    </script>
+</body>
+</html>
