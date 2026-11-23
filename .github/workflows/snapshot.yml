@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: "*/15 13-21 * * 1-5"
   workflow_dispatch:
-    inputs:
-      tickers_override:
-        description: "Optional comma-separated tickers to override the watchlist for this run"
-        required: false
-        default: ""
 
 permissions:
   contents: write
@@ -38,14 +33,13 @@ jobs:
 
       - name: Run snapshot across watchlist & persist state
         env:
-          TICKERS: "${{ github.event.inputs.tickers_override || 'AAL, AAPL, AMZN, AVGO, BAC, CLF, CLSK, COIN, CSCO, F, GOOGL, IBIT, JD, KO, MARA, NVDA, ONDS, OSCR, PEP, PFE, PG, PLTR, QQQ, RIOT, RIVN, RKLB, S, SBUX, SLV, SOFI, SPCX, SPY, SQQQ, T, TSLA, UBER, WMT, WULF, XLE, XLF, XLU, XLP' }}"
-          MAX_PREMIUM: ""
           OUT_DIR: "docs"
           STATE_FILE: "docs/data/state.json"
+          SNAPSHOTS_FILE: "docs/data/snapshots.json"
         run: |
           python snapshot_worker.py
 
-      - name: Commit & push updated HTML + state.json
+      - name: Commit & push updated dashboard + snapshot data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -53,6 +47,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No dashboard changes to commit."
           else
-            git commit -m "chore: update market snapshot ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+            git commit -m "chore: update 50-ticker market snapshot ($(date -u +'%Y-%m-%d %H:%M UTC'))"
             git push
           fi
