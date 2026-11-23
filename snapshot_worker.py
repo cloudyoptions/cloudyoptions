@@ -34,6 +34,7 @@ RETRY_DELAY_SECONDS = 5
 MIN_OI_FOR_RATIO = 25
 MIN_VOLUME_FOR_FLOW = 10
 MAX_SPREAD_SAMPLES_PER_CONTRACT = 80
+MAX_GREEK_CALC_SCALE = 80
 MAX_MARKET_HISTORY_SAMPLES = 80
 STALE_QUOTE_DAYS = 3
 ARBITRAGE_TOLERANCE = 0.01
@@ -65,7 +66,15 @@ def get_scan_config():
         print(f"Only the first 50 tickers will be scanned: {', '.join(tickers)}")
         print(f"(dropped: {', '.join(dropped)})")
 
-    max_premium = None
+    min_premium = 0.04
+    raw_min = os.getenv("MIN_PREMIUM", "").strip()
+    if raw_min:
+        try:
+            min_premium = float(raw_min)
+        except ValueError:
+            sys.exit(f"'{raw_min}' isn't a valid number.")
+
+    max_premium = 4.0
     raw_max = os.getenv("MAX_PREMIUM", "").strip()
     if raw_max:
         try:
@@ -76,7 +85,7 @@ def get_scan_config():
     return SimpleNamespace(
         tickers=tickers,
         max_premium=max_premium,
-        min_premium=0.06,
+        min_premium=min_premium,
         min_dte=None,
         max_dte=None,
         max_expirations=None,
@@ -408,6 +417,43 @@ def black_scholes_greeks(option_type, S, K, T_years, sigma, r=RISK_FREE_RATE):
         return nan_result
 
 
+def _norm_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_pdf(x):
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def black_scholes_greeks(option_type, S, K, T_years, sigma, r=RISK_FREE_RATE):
+    nan_result = {"delta": math.nan, "gamma": math.nan, "theta": math.nan, "vega": math.nan}
+    if any(v is None or (isinstance(v, float) and math.isnan(v)) for v in (S, K, T_years, sigma)):
+        return nan_result
+    if S <= 0 or K <= 0 or T_years <= 0 or sigma <= 0:
+        return nan_result
+    try:
+        sqrt_T = math.sqrt(T_years)
+        d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T_years) / (sigma * sqrt_T)
+        d2 = d1 - sigma * sqrt_T
+        gamma = _norm_pdf(d1) / (S * sigma * sqrt_T)
+        vega = S * _norm_pdf(d1) * sqrt_T / 100.0
+        if option_type == "Call":
+            delta = _norm_cdf(d1)
+            theta_annual = (
+                -(S * _norm_pdf(d1) * sigma) / (2 * sqrt_T)
+                - r * K * math.exp(-r * T_years) * _norm_cdf(d2)
+            )
+        else:
+            delta = _norm_cdf(d1) - 1.0
+            theta_annual = (
+                -(S * _norm_pdf(d1) * sigma) / (2 * sqrt_T)
+                + r * K * math.exp(-r * T_years) * _norm_cdf(-d2)
+            )
+        return {"delta": delta, "gamma": gamma, "theta": theta_annual / 365.0, "vega": vega}
+    except (ValueError, ZeroDivisionError):
+        return nan_result
+
+
 def make_contract_key(row):
     symbol = row.get("contractSymbol")
     if symbol is not None and not pd.isna(symbol) and str(symbol).strip():
@@ -487,21 +533,62 @@ def add_computed_metrics(df, option_type, expiration, underlying_price, fetch_ti
 
     df["ivReliable"] = clean_spread_mask
 
+    # Prefer Yahoo Finance Greeks when provided; fall back to Black-Scholes if unavailable
+    yf_greek_aliases = {
+        "delta": ["delta", "Delta"],
+        "gamma": ["gamma", "Gamma"],
+        "theta": ["theta", "Theta"],
+        "vega": ["vega", "Vega"],
+    }
+    yf_cols = {}
+    for target_col, candidates in yf_greek_aliases.items():
+        matched_series = None
+        for cand in candidates:
+            if cand in df.columns:
+                s = pd.to_numeric(df[cand], errors="coerce")
+                if s.notna().any():
+                    matched_series = s
+                    break
+        yf_cols[target_col] = matched_series if matched_series is not None else pd.Series(math.nan, index=df.index)
+
     T_years = days_to_expiration / 365.0
-    deltas, gammas, thetas, vegas = [], [], [], []
-    for strike, sigma, is_rel in zip(df["strike"], df["impliedVolatility"], df["ivReliable"]):
-        if not is_rel or sigma is None or pd.isna(sigma) or not (0.01 < float(sigma) < 4.0):
-            deltas.append(math.nan)
-            gammas.append(math.nan)
-            thetas.append(math.nan)
-            vegas.append(math.nan)
-            continue
-        g = black_scholes_greeks(option_type, underlying_price, strike, T_years, float(sigma))
-        deltas.append(g["delta"])
-        gammas.append(g["gamma"])
-        thetas.append(g["theta"])
-        vegas.append(g["vega"])
+    deltas, gammas, thetas, vegas, computed_flags = [], [], [], [], []
+    for idx, (strike, sigma, is_rel) in enumerate(zip(df["strike"], df["impliedVolatility"], df["ivReliable"])):
+        d_val = yf_cols["delta"].iloc[idx]
+        g_val = yf_cols["gamma"].iloc[idx]
+        t_val = yf_cols["theta"].iloc[idx]
+        v_val = yf_cols["vega"].iloc[idx]
+
+        need_calc = (
+            pd.isna(d_val) or not math.isfinite(float(d_val))
+            or pd.isna(t_val) or not math.isfinite(float(t_val))
+        )
+        if need_calc and is_rel and sigma is not None and not pd.isna(sigma) and (0.01 < float(sigma) < 4.0):
+            bs = black_scholes_greeks(option_type, underlying_price, strike, T_years, float(sigma))
+            used_any_calc = False
+            if (pd.isna(d_val) or not math.isfinite(float(d_val))) and math.isfinite(bs["delta"]):
+                d_val = bs["delta"]
+                used_any_calc = True
+            if (pd.isna(g_val) or not math.isfinite(float(g_val))) and math.isfinite(bs["gamma"]):
+                g_val = bs["gamma"]
+                used_any_calc = True
+            if (pd.isna(t_val) or not math.isfinite(float(t_val))) and math.isfinite(bs["theta"]):
+                t_val = bs["theta"]
+                used_any_calc = True
+            if (pd.isna(v_val) or not math.isfinite(float(v_val))) and math.isfinite(bs["vega"]):
+                v_val = bs["vega"]
+                used_any_calc = True
+            computed_flags.append(used_any_calc)
+        else:
+            computed_flags.append(False)
+
+        deltas.append(d_val)
+        gammas.append(g_val)
+        thetas.append(t_val)
+        vegas.append(v_val)
+
     df["delta"], df["gamma"], df["theta"], df["vega"] = deltas, gammas, thetas, vegas
+    df["greekComputed"] = computed_flags
 
     df["contractKey"] = [make_contract_key(r) for _, r in df.iterrows()]
     return df
@@ -512,10 +599,12 @@ def attach_average_spread(df, state, ticker):
     if state is None:
         df["avgSpreadPct"] = df["spreadPct"]
         df["spreadSampleCount"] = df["spreadPct"].notna().astype(int)
+        df["greekCalcCount"] = df.get("greekComputed", pd.Series(False, index=df.index)).astype(int)
         return df
 
     avg_vals = []
     sample_counts = []
+    greek_calc_counts = []
     for _, row in df.iterrows():
         key = row.get("contractKey") or make_contract_key(row)
         val = row.get("spreadPct")
@@ -527,8 +616,13 @@ def attach_average_spread(df, state, ticker):
             avg_vals.append(math.nan)
             sample_counts.append(0)
 
+        was_computed = bool(row.get("greekComputed", False))
+        calc_count = state.record_greek_calc(ticker, key, was_computed)
+        greek_calc_counts.append(calc_count)
+
     df["avgSpreadPct"] = avg_vals
     df["spreadSampleCount"] = sample_counts
+    df["greekCalcCount"] = greek_calc_counts
     return df
 
 
@@ -618,6 +712,8 @@ def serialize_ticker_snapshot(ticker, underlying_price, full_df, filtered_df, wa
             "iv": iv_clean,
             "delta": _clean_num(row.get("delta"), 3),
             "theta": _clean_num(row.get("theta"), 3),
+            "greekComputed": bool(row.get("greekComputed", False)),
+            "greekCalcCount": int(pd.to_numeric(row.get("greekCalcCount", 0), errors="coerce") or 0),
             "noBid": bool(row.get("noBid", False)),
             "stale": bool(row.get("staleQuote", False)),
             "arb": bool(row.get("arbitrageViolation", False)),
@@ -656,6 +752,7 @@ class DashboardState:
         self.snapshots_path = snapshots_path
         self.spread_history = {}
         self.market_history = {}
+        self.greek_calc_counts = {}
         self.sample_rounds = {}
         self.snapshots = {}
         self._load()
@@ -667,6 +764,7 @@ class DashboardState:
                     data = json.load(f)
                 self.spread_history = data.get("spread_history", {})
                 self.market_history = data.get("market_history", {})
+                self.greek_calc_counts = data.get("greek_calc_counts", {})
                 self.sample_rounds = data.get("sample_rounds", {})
                 print(f"[State] Loaded persisted history from {self.state_path}.")
             except Exception as exc:
@@ -688,6 +786,7 @@ class DashboardState:
             "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "sample_rounds": self.sample_rounds,
             "market_history": self.market_history,
+            "greek_calc_counts": self.greek_calc_counts,
             "spread_history": self.spread_history,
         }
         tmp_state = self.state_path.with_suffix(".tmp")
@@ -708,6 +807,14 @@ class DashboardState:
             json.dump(snap_payload, f, separators=(",", ":"))
         tmp_snap.replace(self.snapshots_path)
         print(f"[Snapshots] Saved {len(self.snapshots)} ticker snapshots to {self.snapshots_path}.")
+
+    def record_greek_calc(self, ticker, contract_key, was_computed: bool):
+        ticker_counts = self.greek_calc_counts.setdefault(ticker, {})
+        current = int(ticker_counts.get(contract_key, 0) or 0)
+        if was_computed:
+            current = min(MAX_GREEK_CALC_SCALE, current + 1)
+        ticker_counts[contract_key] = current
+        return current
 
     def record_spread_sample(self, ticker, contract_key, spread_pct):
         ticker_hist = self.spread_history.setdefault(ticker, {})
@@ -823,6 +930,19 @@ def scan_and_cache_ticker(ticker, config):
         calls_df = add_computed_metrics(chain.calls, "Call", exp, underlying_price, now_ts)
         puts_df = add_computed_metrics(chain.puts, "Put", exp, underlying_price, now_ts)
         exp_df = pd.concat([calls_df, puts_df], ignore_index=True)
+
+        if not exp_df.empty:
+            bid_s = pd.to_numeric(exp_df.get("bid"), errors="coerce")
+            ask_s = pd.to_numeric(exp_df.get("ask"), errors="coerce")
+            last_s = pd.to_numeric(exp_df.get("lastPrice"), errors="coerce")
+            two_sided = bid_s.notna() & ask_s.notna() & (bid_s > 0) & (ask_s > 0) & (ask_s >= bid_s)
+            ref_price = ((bid_s + ask_s) / 2.0).where(two_sided, last_s)
+            price_ok = ref_price.notna()
+            if config.min_premium is not None:
+                price_ok &= ref_price >= config.min_premium
+            if config.max_premium is not None:
+                price_ok &= ref_price <= config.max_premium
+            exp_df = exp_df[price_ok].copy()
 
         if not exp_df.empty:
             all_dfs.append(exp_df)
@@ -1356,7 +1476,7 @@ def build_index_page(out_dir: Path, watchlist: list):
         <div class="filter-count" id="filter-count">0 matching contracts</div>
     </div>
 
-    <div class="note">Click any table header to sort. Avg Spread% averages clean spread% samples across snapshots (hover cell for sample count). Red rows highlight no-bid, stale, or below-intrinsic quotes.</div>
+    <div class="note">Click any table header to sort. Avg Spread% averages clean spread% samples across snapshots (hover cell for sample count). Delta &amp; Theta show Yahoo Greeks when available or compute them when missing, shading mildly more orange on a 0&ndash;80 scale each time Greeks are calculated while keeping text legible. Red rows highlight no-bid, stale, or below-intrinsic quotes.</div>
     <div class="table-wrap">
         <table class="data-table" id="scan-results-table" data-sort-col="" data-sort-dir="">
             <thead>
@@ -1800,6 +1920,14 @@ def build_index_page(out_dir: Path, watchlist: list):
                 const isFlagged = Boolean(r.noBid || r.stale || r.arb);
                 const rowCls = isFlagged ? ' class="flagged-row"' : "";
                 const spreadTitle = `Averaged across ${r.samples || 0} clean sample(s)`;
+                const calcCount = Math.max(0, Math.min(80, Number(r.greekCalcCount || 0)));
+                const calcRatio = calcCount / 80.0;
+                const greekAlpha = calcCount > 0 ? (0.08 + calcRatio * 0.42).toFixed(3) : "0";
+                const greekStyle = calcCount > 0
+                    ? ` style="background-color: rgba(251, 146, 60, ${greekAlpha}); color: #431407; font-weight: ${calcCount >= 40 ? "600" : "400"};"`
+                    : "";
+                const greekSrcLabel = r.greekComputed ? "Calculated fallback this run" : "From Yahoo Finance";
+                const greekTitle = `${greekSrcLabel} · Calculated count: ${calcCount}/80`;
                 return `<tr${rowCls}>
                     <td>${escapeHtml(r.type || "-")}</td>
                     <td>${escapeHtml(r.exp || "-")}</td>
@@ -1815,8 +1943,8 @@ def build_index_page(out_dir: Path, watchlist: list):
                     <td>${r.oi ?? 0}</td>
                     <td>${fmtNum(r.volOi)}</td>
                     <td>${fmtNum(r.iv, true)}</td>
-                    <td>${fmtNum(r.delta, false, 3)}</td>
-                    <td>${fmtNum(r.theta, false, 3)}</td>
+                    <td${greekStyle} title="${escapeHtml(greekTitle)}">${fmtNum(r.delta, false, 3)}</td>
+                    <td${greekStyle} title="${escapeHtml(greekTitle)}">${fmtNum(r.theta, false, 3)}</td>
                     <td>${r.noBid ? "YES" : "No"}</td>
                     <td>${r.stale ? "YES" : "No"}</td>
                 </tr>`;
