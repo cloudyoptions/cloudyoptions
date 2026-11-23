@@ -857,11 +857,12 @@
             }
 
             const spotStr = (snap.spot !== null && snap.spot !== undefined) ? `$${Number(snap.spot).toFixed(2)}` : "N/A";
-            const rounds = snap.sample_rounds || history.length || 1;
+            const refreshNum = snap.refresh_count ?? snap.sample_rounds ?? (history.length || 1);
+            const intervalMin = snap.refresh_interval_minutes ?? SNAPSHOT_PAYLOAD.refresh_interval_minutes ?? 15;
             document.title = `${ticker} Options Scan Dashboard`;
             document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
             document.getElementById("dashboard-meta").innerHTML =
-                `Underlying Price: <strong>${spotStr}</strong> | Latest Clean Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> | Valid Snapshots: <strong>${rounds}</strong> (last ${history.length} in trend)`;
+                `Underlying Price: <strong>${spotStr}</strong> | Refresh: <strong>#${refreshNum}</strong> | Background Interval: <strong>Every ${intervalMin} min (weekdays)</strong> | Latest Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> (${history.length} in trend)`;
 
             const warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
             if (warnings.length > 0 && warnBanner && warnList) {
@@ -1081,6 +1082,60 @@
             filterTable();
         }
 
+        const AUTO_POLL_INTERVAL_MS = 120000; // Check every 2 minutes for new GitHub Actions commits
+        let LAST_SEEN_UPDATED_AT = null;
+        let POLL_IN_FLIGHT = false;
+
+        async function fetchLatestDashboardData({ isInitial = false } = {}) {
+            if (POLL_IN_FLIGHT) return;
+            POLL_IN_FLIGHT = true;
+            const statusEl = document.getElementById("batch-status");
+            try {
+                const [snapRes, stateRes] = await Promise.all([
+                    fetch("./data/snapshots.json?v=" + Date.now(), { cache: "no-store" }),
+                    fetch("./data/state.json?v=" + Date.now(), { cache: "no-store" })
+                ]);
+                let nextSnap = SNAPSHOT_PAYLOAD;
+                let nextState = STATE_PAYLOAD;
+                if (snapRes.ok) {
+                    nextSnap = await snapRes.json();
+                }
+                if (stateRes.ok) {
+                    nextState = await stateRes.json();
+                }
+
+                const nextUpdatedAt = nextSnap.updated_at || null;
+                const hasNewBatch = Boolean(nextUpdatedAt && nextUpdatedAt !== LAST_SEEN_UPDATED_AT);
+
+                SNAPSHOT_PAYLOAD = nextSnap;
+                STATE_PAYLOAD = nextState;
+
+                const wl = getWatchlist();
+                if (statusEl) {
+                    const intervalMin = nextSnap.refresh_interval_minutes ?? 15;
+                    const checkedSuffix = !isInitial ? " (auto-checked)" : "";
+                    statusEl.textContent = nextUpdatedAt
+                        ? `Every ${intervalMin} min · Last batch: ${nextUpdatedAt}${checkedSuffix}`
+                        : `Every ${intervalMin} min · ${wl.length} tickers configured`;
+                }
+
+                if (isInitial) {
+                    LAST_SEEN_UPDATED_AT = nextUpdatedAt;
+                    const inputVal = (document.getElementById("watchlist-input")?.value || "").trim().toUpperCase();
+                    const initialTicker = inputVal || wl[0] || "XLE";
+                    renderTickerView(initialTicker);
+                } else if (hasNewBatch) {
+                    LAST_SEEN_UPDATED_AT = nextUpdatedAt;
+                    const active = ACTIVE_TICKER || wl[0] || "XLE";
+                    renderTickerView(active);
+                }
+            } catch (err) {
+                console.error("Failed to fetch snapshot JSON files:", err);
+            } finally {
+                POLL_IN_FLIGHT = false;
+            }
+        }
+
         async function loadSnapshotsAndInit() {
             syncInputs("filter-dte-slider", "filter-dte-num");
             syncInputs("filter-max-dte-slider", "filter-max-dte-num");
@@ -1089,30 +1144,19 @@
             syncInputs("filter-spread-slider", "filter-spread-num");
             syncInputs("filter-oi-slider", "filter-oi-num");
 
-            const statusEl = document.getElementById("batch-status");
-            try {
-                const [snapRes, stateRes] = await Promise.all([
-                    fetch("./data/snapshots.json?v=" + Date.now(), { cache: "no-store" }),
-                    fetch("./data/state.json?v=" + Date.now(), { cache: "no-store" })
-                ]);
-                if (snapRes.ok) {
-                    SNAPSHOT_PAYLOAD = await snapRes.json();
-                }
-                if (stateRes.ok) {
-                    STATE_PAYLOAD = await stateRes.json();
-                }
-            } catch (err) {
-                console.error("Failed to fetch snapshot JSON files:", err);
-            }
+            await fetchLatestDashboardData({ isInitial: true });
 
-            const wl = getWatchlist();
-            const firstTicker = wl[0] || "XLE";
-            if (statusEl) {
-                statusEl.textContent = SNAPSHOT_PAYLOAD.updated_at
-                    ? `Background batch updated: ${SNAPSHOT_PAYLOAD.updated_at}`
-                    : `${wl.length} tickers configured`;
-            }
-            renderTickerView(firstTicker);
+            setInterval(() => {
+                if (document.visibilityState === "visible") {
+                    fetchLatestDashboardData({ isInitial: false });
+                }
+            }, AUTO_POLL_INTERVAL_MS);
+
+            document.addEventListener("visibilitychange", () => {
+                if (document.visibilityState === "visible") {
+                    fetchLatestDashboardData({ isInitial: false });
+                }
+            });
         }
 
         document.addEventListener("DOMContentLoaded", loadSnapshotsAndInit);
