@@ -457,7 +457,7 @@
         <div class="filter-count" id="filter-count">0 matching contracts</div>
     </div>
 
-    <div class="note">Click any table header to sort. Avg Spread% averages clean spread% samples across snapshots (hover cell for sample count). Red rows highlight no-bid, stale, or below-intrinsic quotes.</div>
+    <div class="note">Click any table header to sort. Avg Spread% averages clean spread% samples across snapshots (hover cell for sample count). Delta &amp; Theta show Yahoo Greeks when available or compute them when missing, shading mildly more orange on a 0&ndash;80 scale each time Greeks are calculated while keeping text legible. Red rows highlight no-bid, stale, or below-intrinsic quotes.</div>
     <div class="table-wrap">
         <table class="data-table" id="scan-results-table" data-sort-col="" data-sort-dir="">
             <thead>
@@ -901,6 +901,14 @@
                 const isFlagged = Boolean(r.noBid || r.stale || r.arb);
                 const rowCls = isFlagged ? ' class="flagged-row"' : "";
                 const spreadTitle = `Averaged across ${r.samples || 0} clean sample(s)`;
+                const calcCount = Math.max(0, Math.min(80, Number(r.greekCalcCount || 0)));
+                const calcRatio = calcCount / 80.0;
+                const greekAlpha = calcCount > 0 ? (0.08 + calcRatio * 0.42).toFixed(3) : "0";
+                const greekStyle = calcCount > 0
+                    ? ` style="background-color: rgba(251, 146, 60, ${greekAlpha}); color: #431407; font-weight: ${calcCount >= 40 ? "600" : "400"};"`
+                    : "";
+                const greekSrcLabel = r.greekComputed ? "Calculated fallback this run" : "From Yahoo Finance";
+                const greekTitle = `${greekSrcLabel} · Calculated count: ${calcCount}/80`;
                 return `<tr${rowCls}>
                     <td>${escapeHtml(r.type || "-")}</td>
                     <td>${escapeHtml(r.exp || "-")}</td>
@@ -916,8 +924,8 @@
                     <td>${r.oi ?? 0}</td>
                     <td>${fmtNum(r.volOi)}</td>
                     <td>${fmtNum(r.iv, true)}</td>
-                    <td>${fmtNum(r.delta, false, 3)}</td>
-                    <td>${fmtNum(r.theta, false, 3)}</td>
+                    <td${greekStyle} title="${escapeHtml(greekTitle)}">${fmtNum(r.delta, false, 3)}</td>
+                    <td${greekStyle} title="${escapeHtml(greekTitle)}">${fmtNum(r.theta, false, 3)}</td>
                     <td>${r.noBid ? "YES" : "No"}</td>
                     <td>${r.stale ? "YES" : "No"}</td>
                 </tr>`;
