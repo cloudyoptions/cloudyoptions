@@ -457,7 +457,7 @@
         <div class="filter-count" id="filter-count">0 matching contracts</div>
     </div>
 
-    <div class="note">Click any table header to sort. Avg Spread% averages valid spread% samples across snapshots (hover cell for sample count). Rows with data-quality issues are highlighted in red.</div>
+    <div class="note">Click any table header to sort. Avg Spread% averages clean spread% samples across snapshots (hover cell for sample count). Red rows highlight no-bid, stale, or below-intrinsic quotes.</div>
     <div class="table-wrap">
         <table class="data-table" id="scan-results-table" data-sort-col="" data-sort-dir="">
             <thead>
@@ -619,7 +619,7 @@
                 spotTxt = ` Underlying moved $${Number(first.spot).toFixed(2)} &rarr; $${Number(latest.spot).toFixed(2)} (${dpPct >= 0 ? "+" : ""}${dpPct.toFixed(2)}%).`;
             }
 
-            return `Across <strong>${n}</strong> snapshots (${first.timestamp} &ndash; ${latest.timestamp}), composite order-flow bias ${trend}.${flipTxt}${volTxt}${spotTxt}`;
+            return `Across <strong>${n}</strong> recent snapshots (${first.timestamp} &ndash; ${latest.timestamp}), composite order-flow bias ${trend}.${flipTxt}${volTxt}${spotTxt}`;
         }
 
         function computeDeltas(values) {
@@ -757,11 +757,14 @@
                 return;
             }
 
+            const cleanLiqContracts = contracts.filter(
+                c => !c.noBid && !c.arb && c.avgSpread !== null && c.avgSpread !== undefined && Number.isFinite(Number(c.avgSpread))
+            );
             const liqTraces = ["Call", "Put"].map(optType => {
-                const sub = contracts.filter(c => c.type === optType);
+                const sub = cleanLiqContracts.filter(c => c.type === optType);
                 return {
                     x: sub.map(c => Number(c.vol || 0)),
-                    y: sub.map(c => c.avgSpread !== null && c.avgSpread !== undefined ? Number(c.avgSpread) : 100.0),
+                    y: sub.map(c => Number(c.avgSpread)),
                     name: optType,
                     mode: "markers",
                     marker: {
@@ -778,14 +781,14 @@
             Plotly.newPlot(liqEl, liqTraces, {
                 template: "plotly_white",
                 height: 420,
-                title: { text: `${ticker} Liquidity Map (Volume vs Avg Spread %)`, font: { size: 15 } },
+                title: { text: `${ticker} Liquidity Map (Volume vs Avg Spread %, Clean Two-Sided Quotes)`, font: { size: 15 } },
                 xaxis: { title: "Volume" },
                 yaxis: { title: "Avg Spread %" },
                 legend: { title: { text: "Option Type" } },
                 margin: { l: 60, r: 30, t: 55, b: 50 }
             }, { responsive: true });
 
-            const validIv = contracts.filter(c => !c.noBid && !c.arb && c.iv !== null && c.iv !== undefined && Number(c.iv) > 0);
+            const validIv = contracts.filter(c => !c.noBid && !c.arb && c.iv !== null && c.iv !== undefined && Number(c.iv) > 1 && Number(c.iv) < 400);
             if (validIv.length === 0) {
                 Plotly.purge(ivEl);
                 ivEl.innerHTML = "<p style='padding:12px;'>No reliable IV data available for smile chart.</p>";
@@ -836,7 +839,7 @@
 
             if (!snap) {
                 if (noticeEl) {
-                    noticeEl.textContent = `No snapshot found yet for ${ticker}. It may not be in the 50-ticker background watchlist or hasn't finished its first scan.`;
+                    noticeEl.textContent = `No snapshot found yet for ${ticker}. It may not be in the background watchlist or hasn't finished its first clean scan.`;
                     noticeEl.classList.add("visible");
                 }
                 document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
@@ -858,7 +861,7 @@
             document.title = `${ticker} Options Scan Dashboard`;
             document.getElementById("dashboard-title").textContent = `${ticker} Options Scanner Dashboard`;
             document.getElementById("dashboard-meta").innerHTML =
-                `Underlying Price: <strong>${spotStr}</strong> | Latest Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> | Spread Samples: <strong>${rounds}</strong> (every ${SPREAD_SAMPLE_INTERVAL_SECONDS = 60}s)`;
+                `Underlying Price: <strong>${spotStr}</strong> | Latest Clean Snapshot: <strong>${escapeHtml(snap.fetched_at || "-")}</strong> | Valid Snapshots: <strong>${rounds}</strong> (last ${history.length} in trend)`;
 
             const warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
             if (warnings.length > 0 && warnBanner && warnList) {
@@ -896,7 +899,7 @@
             tbody.innerHTML = contracts.map(r => {
                 const isFlagged = Boolean(r.noBid || r.stale || r.arb);
                 const rowCls = isFlagged ? ' class="flagged-row"' : "";
-                const spreadTitle = `Averaged across ${r.samples || 0} sample(s)`;
+                const spreadTitle = `Averaged across ${r.samples || 0} clean sample(s)`;
                 return `<tr${rowCls}>
                     <td>${escapeHtml(r.type || "-")}</td>
                     <td>${escapeHtml(r.exp || "-")}</td>
